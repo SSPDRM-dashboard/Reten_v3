@@ -89,7 +89,6 @@ export default function App() {
   // Google Sheets State
   const [rawData, setRawData] = useState<any[]>([]);
   const [csvFields, setCsvFields] = useState<string[]>([]);
-  const [rawCsvText, setRawCsvText] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -427,42 +426,63 @@ export default function App() {
     setIsLoading(true);
     setError('');
     try {
-      // Fetch specific sheet tab based on the selected year
-      const response = await fetch(`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${year}`);
+      const yearsToFetch = [year, year - 1, year - 2];
+      const fetchPromises = yearsToFetch.map(y => 
+        fetch(`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${y}`)
+          .then(res => {
+            if (!res.ok) {
+              if (y === year && (res.status === 401 || res.status === 403)) {
+                throw new Error('Access Denied. Please ensure the Google Sheet sharing setting is set to "Anyone with the link".');
+              }
+              if (y === year) {
+                throw new Error(`Failed to fetch data. Ensure the sheet is public and has a tab named "${year}".`);
+              }
+              return null; // Past years might not exist, which is fine
+            }
+            return res.text();
+          })
+          .catch(err => {
+            if (y === year) throw err;
+            console.warn(`Could not fetch data for year ${y}:`, err);
+            return null;
+          })
+      );
+
+      const results = await Promise.all(fetchPromises);
       
-      if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-          throw new Error('Access Denied. Please ensure the Google Sheet sharing setting is set to "Anyone with the link".');
-        }
+      const currentYearCsv = results[0];
+      if (!currentYearCsv) {
         throw new Error(`Failed to fetch data. Ensure the sheet is public and has a tab named "${year}".`);
       }
-      
-      const csvText = await response.text();
-      setRawCsvText(csvText);
 
-      // If the response is HTML, it means Google redirected to a login page
-      if (csvText.trim().toLowerCase().startsWith('<!doctype html>') || csvText.trim().toLowerCase().startsWith('<html')) {
+      if (currentYearCsv.trim().toLowerCase().startsWith('<!doctype html>') || currentYearCsv.trim().toLowerCase().startsWith('<html')) {
          throw new Error('Received an HTML login page instead of data. Please ensure the Google Sheet sharing setting is set to "Anyone with the link".');
       }
-      
-      Papa.parse(csvText, {
-        header: false,
-        skipEmptyLines: true,
-        complete: (results) => {
-          if (results.errors.length > 0 && results.data.length === 0) {
-            setError('Error parsing CSV data. Check your sheet format.');
-          } else {
-            setRawData(results.data);
-            setCsvFields([]);
-            setLastUpdated(new Date());
-          }
-          setIsLoading(false);
-        },
-        error: (err: any) => {
-          setError(err.message);
-          setIsLoading(false);
+
+      let combinedData: any[] = [];
+
+      results.forEach(csvText => {
+        if (csvText && !csvText.trim().toLowerCase().startsWith('<!doctype html>')) {
+          Papa.parse(csvText, {
+            header: false,
+            skipEmptyLines: true,
+            complete: (parseResult) => {
+              if (parseResult.data && parseResult.data.length > 0) {
+                combinedData = [...combinedData, ...parseResult.data];
+              }
+            }
+          });
         }
       });
+
+      if (combinedData.length === 0) {
+        setError('Error parsing CSV data. Check your sheet format.');
+      } else {
+        setRawData(combinedData);
+        setCsvFields([]);
+        setLastUpdated(new Date());
+      }
+      setIsLoading(false);
     } catch (err: any) {
       setError(err.message || 'Failed to connect to Google Sheets');
       setIsLoading(false);
@@ -600,7 +620,9 @@ export default function App() {
       }
 
       const isYearMatch = rowYear !== -1 && rowYear === selectedYear;
-      if (!isYearMatch) continue;
+      const isPast3Years = rowYear !== -1 && (rowYear === selectedYear || rowYear === selectedYear - 1 || rowYear === selectedYear - 2);
+      
+      if (!isPast3Years) continue;
 
       const rowIsDistrictMatch = isDistrictMatch(districtStr, selectedDistrict);
 
@@ -636,16 +658,28 @@ export default function App() {
               name: personName,
               rank: currentRank,
               noBadan: finalNoBadan,
+              years: {
+                [selectedYear]: { months: Array(12).fill(0), total: 0 },
+                [selectedYear - 1]: { months: Array(12).fill(0), total: 0 },
+                [selectedYear - 2]: { months: Array(12).fill(0), total: 0 }
+              },
               months: Array(12).fill(0),
               total: 0,
               latestDistrict: String(districtStr || '').trim().toUpperCase(),
               latestDateValue: rowDateValue,
-              districts: new Set([String(districtStr || '').trim().toUpperCase()])
+              districts: new Set([String(districtStr || '').trim().toUpperCase()]),
+              districtsByYear: {
+                [rowYear]: new Set([String(districtStr || '').trim().toUpperCase()])
+              }
             });
           } else {
             const pData = personalMap.get(personName)!;
             if (districtStr) {
-              pData.districts.add(String(districtStr).trim().toUpperCase());
+              const dStr = String(districtStr).trim().toUpperCase();
+              pData.districts.add(dStr);
+              if (!pData.districtsByYear) pData.districtsByYear = {};
+              if (!pData.districtsByYear[rowYear]) pData.districtsByYear[rowYear] = new Set();
+              pData.districtsByYear[rowYear].add(dStr);
             }
             // Update latest district and rank if this row is newer or same date (last row wins)
             if (rowDateValue >= pData.latestDateValue) {
@@ -658,11 +692,19 @@ export default function App() {
           
           const pData = personalMap.get(personName)!;
           if (rowMonth >= 0 && rowMonth < 12) {
-            pData.months[rowMonth] += totalHours;
-            pData.total += totalHours;
+            if (pData.years[rowYear]) {
+              pData.years[rowYear].months[rowMonth] += totalHours;
+              pData.years[rowYear].total += totalHours;
+            }
+            if (rowYear === selectedYear && rowIsDistrictMatch) {
+              pData.months[rowMonth] += totalHours;
+              pData.total += totalHours;
+            }
           }
         }
       });
+
+      if (!isYearMatch) continue;
 
       // Daily, Weekly, Rank - these MUST still match the district filter
       if (!rowIsDistrictMatch) {
@@ -756,8 +798,19 @@ export default function App() {
 
     const personal = Array.from(personalMap.values())
       .filter(p => {
-        const isDistrict = Array.from(p.districts as Set<string>).some(d => isDistrictMatch(d, selectedDistrict));
-        if (!isDistrict) return false;
+        // Always include the selected person (or logged in user) regardless of district filter
+        if (selectedPerson !== 'ALL' && p.name === selectedPerson) return true;
+        if (userRole.toLowerCase() !== 'admin' && (p.name.includes(loggedInName) || loggedInName.includes(p.name))) return true;
+
+        if (selectedPerson === 'ALL') {
+          const districtsThisYear = p.districtsByYear?.[selectedYear] || new Set();
+          const isDistrictThisYear = Array.from(districtsThisYear).some(d => isDistrictMatch(d, selectedDistrict));
+          if (!isDistrictThisYear) return false;
+        } else {
+          const isDistrict = Array.from(p.districts as Set<string>).some(d => isDistrictMatch(d, selectedDistrict));
+          if (!isDistrict) return false;
+        }
+
         if (searchNoBadan.trim() !== '') {
           return (p.noBadan || '').includes(searchNoBadan.trim());
         }
@@ -868,6 +921,23 @@ export default function App() {
     }
   };
 
+  const handlePrintAll = () => {
+    setPrintMode('ALL');
+    setTimeout(() => {
+      try {
+        const result = window.print();
+        if (result === undefined) {
+          if (window.self !== window.top) {
+             setShowPrintModal(true);
+          }
+        }
+      } catch (e) {
+        console.error("Print failed:", e);
+        setShowPrintModal(true);
+      }
+    }, 500);
+  };
+
   const handlePrintCurrent = () => {
     setPrintMode('CURRENT');
     setTimeout(() => {
@@ -885,21 +955,61 @@ export default function App() {
     }, 100);
   };
 
-  const handlePrintAll = () => {
+  const handleSaveAllPDF = () => {
+    if (isGeneratingPDF) return;
+    
+    setIsGeneratingPDF(true);
     setPrintMode('ALL');
+    
     setTimeout(() => {
-      try {
-        const result = window.print();
-        if (result === undefined) {
-          if (window.self !== window.top) {
-             setShowPrintModal(true);
-          }
-        }
-      } catch (e) {
-        console.error("Print failed:", e);
-        setShowPrintModal(true);
+      window.scrollTo(0, 0);
+      const element = document.getElementById('report-container');
+      
+      if (!element) {
+        setIsGeneratingPDF(false);
+        alert("Report container not found.");
+        return;
       }
-    }, 100);
+      
+      const originalStyle = element.style.overflow;
+      element.style.overflow = 'visible';
+      
+      const opt: any = {
+        margin:       [10, 10, 10, 10],
+        filename:     `SSPDRM_Full_Report_${selectedMonth}_${selectedYear}.pdf`,
+        image:        { type: 'jpeg', quality: 0.98 },
+        html2canvas:  { 
+          scale: 2, 
+          useCORS: true,
+          logging: false,
+          letterRendering: true,
+          allowTaint: true,
+          scrollX: 0,
+          scrollY: 0,
+          windowWidth: 1122
+        },
+        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape', compress: true },
+        pagebreak:    { mode: ['css', 'legacy'] }
+      };
+ 
+      try {
+        html2pdf().set(opt).from(element).save().then(() => {
+          element.style.overflow = originalStyle;
+          setIsGeneratingPDF(false);
+          setPrintMode('CURRENT');
+        }).catch((err: any) => {
+          console.error("PDF generation error:", err);
+          element.style.overflow = originalStyle;
+          setIsGeneratingPDF(false);
+          setPrintMode('CURRENT');
+        });
+      } catch (err) {
+        console.error("html2pdf initialization error:", err);
+        element.style.overflow = originalStyle;
+        setIsGeneratingPDF(false);
+        setPrintMode('CURRENT');
+      }
+    }, 1000);
   };
 
   const handleSaveCurrentPDF = () => {
@@ -924,17 +1034,18 @@ export default function App() {
       element.style.overflow = 'visible';
       
       const opt: any = {
-        margin:       5,
+        margin:       [10, 10, 10, 10],
         filename:     `SSPDRM_${activeTab}_Report_${selectedMonth}_${selectedYear}.pdf`,
-        image:        { type: 'jpeg', quality: 0.95 },
+        image:        { type: 'jpeg', quality: 0.98 },
         html2canvas:  { 
-          scale: 1, // Lower scale for better reliability with large reports
+          scale: 2, 
           useCORS: true,
           logging: false,
           letterRendering: true,
           allowTaint: true,
-          width: element.scrollWidth, // Capture full width
-          windowWidth: element.scrollWidth > 1400 ? element.scrollWidth : 1400
+          scrollX: 0,
+          scrollY: 0,
+          windowWidth: 1122 // Ensure a consistent width for scaling
         },
         jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape', compress: true },
         pagebreak:    { mode: ['css', 'legacy'] }
@@ -956,64 +1067,6 @@ export default function App() {
         element.style.overflow = originalStyle;
         setIsGeneratingPDF(false);
         alert("Could not start PDF generation. Please use the 'Print Current' button instead.");
-      }
-    }, 1000);
-  };
-
-  const handleSaveAllPDF = () => {
-    if (isGeneratingPDF) return;
-    
-    setIsGeneratingPDF(true);
-    setPrintMode('ALL');
-    
-    // Give more time for the UI to settle
-    setTimeout(() => {
-      window.scrollTo(0, 0);
-      const element = document.getElementById('report-container');
-      
-      if (!element) {
-        setIsGeneratingPDF(false);
-        alert("Report container not found. Please try again.");
-        return;
-      }
-      
-      // Temporarily adjust element for better capture
-      const originalStyle = element.style.overflow;
-      element.style.overflow = 'visible';
-      
-      const opt: any = {
-        margin:       5,
-        filename:     `SSPDRM_All_Reports_${selectedMonth}_${selectedYear}.pdf`,
-        image:        { type: 'jpeg', quality: 0.95 },
-        html2canvas:  { 
-          scale: 1, // Lower scale for better reliability with large reports
-          useCORS: true,
-          logging: false,
-          letterRendering: true,
-          allowTaint: true,
-          width: element.scrollWidth, // Capture full width
-          windowWidth: element.scrollWidth > 1400 ? element.scrollWidth : 1400
-        },
-        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape', compress: true },
-        pagebreak:    { mode: ['css', 'legacy'] }
-      };
-
-      try {
-        // Correct order: .set(opt).from(element).save()
-        html2pdf().set(opt).from(element).save().then(() => {
-          element.style.overflow = originalStyle;
-          setIsGeneratingPDF(false);
-        }).catch((err: any) => {
-          console.error("PDF generation error:", err);
-          element.style.overflow = originalStyle;
-          setIsGeneratingPDF(false);
-          alert("PDF generation failed. This usually happens if the report is too large for the browser's memory. \n\nSolution: Click 'Print All Reports' and choose 'Save as PDF' in the print window.");
-        });
-      } catch (err) {
-        console.error("html2pdf initialization error:", err);
-        element.style.overflow = originalStyle;
-        setIsGeneratingPDF(false);
-        alert("Could not start PDF generation. Please use the 'Print All Reports' button instead.");
       }
     }, 1000);
   };
@@ -1085,7 +1138,7 @@ export default function App() {
 
   // --- RENDERERS ---
   const renderDailyTable = () => (
-    <table className="w-full border-collapse border border-black text-xs sm:text-sm text-center font-medium print:break-inside-avoid">
+    <table className="w-full border-collapse border border-black text-xs sm:text-sm text-center font-medium">
       <thead>
         <tr>
           <th className="border border-black p-1 sm:p-2 w-8" rowSpan={2}>Bil</th>
@@ -1105,7 +1158,7 @@ export default function App() {
       </thead>
       <tbody>
         {dailyWithTotals.map((row) => (
-          <tr key={row.id} className="even:bg-gray-50/50 print:even:bg-transparent">
+          <tr key={row.id} className="even:bg-gray-50/50 print:even:bg-transparent break-inside-avoid">
             <td className="border border-black p-1 font-bold">{row.id}</td>
             <td className="border border-black p-1 text-left font-bold pl-2">{row.name}</td>
             {row.days.map((val, idx) => (
@@ -1134,45 +1187,45 @@ export default function App() {
   );
 
   const renderWeeklyTable = () => (
-    <table className="w-full border-collapse border border-black text-xs sm:text-sm text-center font-medium mt-4 print:break-inside-avoid">
+    <table className="w-full border-collapse border border-black text-xs sm:text-sm print:text-[11px] text-center font-medium mt-4">
       <thead>
         <tr>
-          <th className="border border-black p-2 w-12" rowSpan={2}>BIL</th>
-          <th className="border border-black p-2 text-left w-48 min-w-[150px]" rowSpan={2}>PROGRAM / AKTIVITI</th>
-          <th className="border border-black p-2" colSpan={5}>DALAM BULAN TERSEBUT</th>
-          <th className="border border-black p-2 w-32" rowSpan={2}>JUMLAH JAM<br/>KESELURUHAN</th>
+          <th className="border border-black p-1 print:p-0.5 w-12" rowSpan={2}>BIL</th>
+          <th className="border border-black p-1 print:p-0.5 text-left w-48 min-w-[150px]" rowSpan={2}>PROGRAM / AKTIVITI</th>
+          <th className="border border-black p-1 print:p-0.5" colSpan={5}>DALAM BULAN TERSEBUT</th>
+          <th className="border border-black p-1 print:p-0.5 w-32" rowSpan={2}>JUMLAH JAM<br/>KESELURUHAN</th>
         </tr>
         <tr>
-          <th className="border border-black p-2 w-24">MINGGU<br/>PERTAMA</th>
-          <th className="border border-black p-2 w-24">MINGGU<br/>KEDUA</th>
-          <th className="border border-black p-2 w-24">MINGGU<br/>KETIGA</th>
-          <th className="border border-black p-2 w-24">MINGGU<br/>KEEMPAT</th>
-          <th className="border border-black p-2 w-24">MINGGU<br/>KELIMA</th>
+          <th className="border border-black p-1 print:p-0.5 w-24">MINGGU<br/>PERTAMA</th>
+          <th className="border border-black p-1 print:p-0.5 w-24">MINGGU<br/>KEDUA</th>
+          <th className="border border-black p-1 print:p-0.5 w-24">MINGGU<br/>KETIGA</th>
+          <th className="border border-black p-1 print:p-0.5 w-24">MINGGU<br/>KEEMPAT</th>
+          <th className="border border-black p-1 print:p-0.5 w-24">MINGGU<br/>KELIMA</th>
         </tr>
       </thead>
       <tbody>
         {weeklyWithTotals.map((row) => (
-          <tr key={row.id} className="even:bg-gray-50/50 print:even:bg-transparent">
-            <td className="border border-black p-2">{row.id}</td>
-            <td className="border border-black p-2 text-left pl-2">{row.name}</td>
+          <tr key={row.id} className="even:bg-gray-50/50 print:even:bg-transparent break-inside-avoid">
+            <td className="border border-black p-1 print:p-0.5">{row.id}</td>
+            <td className="border border-black p-1 print:p-0.5 text-left pl-2">{row.name}</td>
             {row.weeks.map((val, idx) => (
-              <td key={idx} className="border border-black p-2">
+              <td key={idx} className="border border-black p-1 print:p-0.5">
                 {val}
               </td>
             ))}
-            <td className="border border-black p-2 bg-gray-50 print:bg-transparent">
+            <td className="border border-black p-1 print:p-0.5 bg-gray-50 print:bg-transparent">
               {row.total}
             </td>
           </tr>
         ))}
         <tr className="bg-gray-50 print:bg-transparent">
-          <td className="border border-black p-2" colSpan={2}></td>
+          <td className="border border-black p-1 print:p-0.5" colSpan={2}></td>
           {weeklyColumnTotals.weeks.map((val, idx) => (
-            <td key={idx} className="border border-black p-2 font-bold text-gray-600 print:text-black">
+            <td key={idx} className="border border-black p-1 print:p-0.5 font-bold text-gray-600 print:text-black">
               {val === 0 ? '' : val}
             </td>
           ))}
-          <td className="border border-black p-2 font-bold text-blue-600 print:text-black">
+          <td className="border border-black p-1 print:p-0.5 font-bold text-blue-600 print:text-black">
             {weeklyColumnTotals.grandTotal}
           </td>
         </tr>
@@ -1181,7 +1234,7 @@ export default function App() {
   );
 
   const renderRankTable = () => (
-    <table className="w-full border-collapse border border-black text-xs sm:text-sm text-center font-medium print:break-inside-avoid">
+    <table className="w-full border-collapse border border-black text-xs sm:text-sm text-center font-medium">
       <thead>
         <tr>
           <th className="border border-black p-2 w-48 bg-white" colSpan={2}>DAERAH</th>
@@ -1213,7 +1266,7 @@ export default function App() {
       </thead>
       <tbody>
         {rankWithTotals.map((row) => (
-          <tr key={row.id} className="even:bg-gray-50/50 print:even:bg-transparent">
+          <tr key={row.id} className="even:bg-gray-50/50 print:even:bg-transparent break-inside-avoid">
             <td className="border border-black p-1">{row.id}</td>
             <td className="border border-black p-1 text-left pl-2">{row.name}</td>
             {row.ranks.map((val, idx) => (
@@ -1271,6 +1324,75 @@ export default function App() {
       });
     });
 
+    if (selectedPerson !== 'ALL' && displayedPersonnel.length > 0) {
+      const person = displayedPersonnel[0];
+      const nameMatch = person.name.match(/\d+/);
+      const noBadanFromName = nameMatch ? nameMatch[0] : '';
+      const cleanName = person.name.replace(noBadanFromName, '').replace(/\s+/g, ' ').trim();
+      
+      let pangkat = person.rank;
+      let noBadanFromRank = '';
+      const rankParts = person.rank.split(' ');
+      if (rankParts.length > 1) {
+        pangkat = rankParts[0];
+        noBadanFromRank = rankParts.slice(1).join(' ');
+      } else if (rankParts.length === 1 && /^\d+$/.test(rankParts[0])) {
+        noBadanFromRank = rankParts[0];
+        pangkat = '';
+      }
+      const finalNoBadan = noBadanFromName || noBadanFromRank;
+
+      return (
+        <div className="w-full">
+          <div className="w-full flex font-bold mb-2 text-[20px] mt-2">
+            <div className="w-24 flex-shrink-0"></div>
+            <div className="flex-1 grid grid-cols-12 gap-0">
+              <div className="col-span-8 text-left pl-2">NAMA : {cleanName}</div>
+              <div className="col-span-4 text-left pl-2">NO.BADAN : {pangkat} {finalNoBadan}</div>
+            </div>
+            <div className="w-24 flex-shrink-0"></div>
+          </div>
+
+          <div className="space-y-2">
+            {[selectedYear, selectedYear - 1, selectedYear - 2].map((year) => {
+              const yearData = person.years && person.years[year] ? person.years[year] : { months: Array(12).fill(0), total: 0 };
+              return (
+                <table key={year} className="w-full border-collapse border border-black text-center font-bold text-[17px]">
+                  <thead>
+                    <tr className="bg-[#135DD8] text-white">
+                      <th className="border border-black py-[6.5px] px-2 w-24">TAHUN</th>
+                      {monthNames.map(m => (
+                        <th key={m} className="border border-black py-[6.5px] px-2 w-16">{m}</th>
+                      ))}
+                      <th className="border border-black py-[6.5px] px-2 w-24">JUMLAH<br/>JAM</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="bg-white">
+                      <td className="border border-black py-[6.5px] px-2">{year}</td>
+                      {yearData.months.map((hours: number, i: number) => (
+                        <td key={i} className="border border-black py-[6.5px] px-2">{hours || 0}</td>
+                      ))}
+                      <td className="border border-black py-[6.5px] px-2">{yearData.total}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              );
+            })}
+          </div>
+
+          <div className="mt-8 text-left text-[17px] font-bold flex justify-center">
+            <div className="w-64">
+              <div className="mb-12 text-center">Disahkan oleh</div>
+              <div className="border-b border-black w-full mb-2"></div>
+              <div>(Nama & Jawatan)</div>
+              <div>Tarikh</div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="w-full">
         {displayedPersonnel.length === 0 && (userRole.toLowerCase() !== 'admin' || selectedPerson !== 'ALL') && (
@@ -1279,7 +1401,7 @@ export default function App() {
           </div>
         )}
         
-        <table className="w-full border-collapse border border-black text-xs sm:text-sm text-center font-medium print:break-inside-avoid">
+        <table className="w-full border-collapse border border-black text-xs sm:text-sm text-center font-medium">
           <thead>
             <tr className="bg-[#135DD8] text-white">
               <th className="border border-black p-2 w-10">BIL</th>
@@ -1318,7 +1440,7 @@ export default function App() {
               const finalNoBadan = noBadanFromName || noBadanFromRank;
 
               return (
-                <tr key={idx} className="even:bg-gray-50/50 print:even:bg-transparent">
+                <tr key={idx} className="even:bg-gray-50/50 print:even:bg-transparent break-inside-avoid">
                   <td className="border border-black p-1">{idx + 1}</td>
                   <td className="border border-black p-1">{finalNoBadan}</td>
                   <td className="border border-black p-1">{pangkat}</td>
@@ -1335,7 +1457,7 @@ export default function App() {
                 <td colSpan={17} className="border border-black p-4 text-gray-500">Tiada rekod anggota dijumpai untuk tahun {selectedYear}</td>
               </tr>
             )}
-            {displayedPersonnel.length > 0 && (
+            {displayedPersonnel.length > 0 && selectedPerson === 'ALL' && (
               <tr className="bg-gray-50 print:bg-transparent font-bold">
                 <td className="border border-black p-2 text-right pr-4" colSpan={4}>JUMLAH KESELURUHAN</td>
                 {monthTotals.map((total, i) => (
@@ -1588,7 +1710,7 @@ export default function App() {
     return (
       <div className="w-full">
         {/* Report 1: Attendance & Allowance */}
-        <div className="print-page-container relative pb-8">
+        <div className="print-page-container relative pb-8 print:pb-0">
           <div className="relative z-10">
             <div className="flex justify-end items-start mb-2">
               <div className="text-right text-[10px] font-bold">
@@ -1599,14 +1721,14 @@ export default function App() {
               </div>
             </div>
 
-            <div className="text-center mb-2 relative -mt-[30px]">
-              <h2 className="text-xl font-bold uppercase">PASUKAN SUKARELAWAN SIMPANAN POLIS</h2>
-              <div className="text-sm font-bold mt-1">
+            <div className="text-center mb-2 relative -mt-[30px] print:-mt-[45px]">
+              <h2 className="text-[30px] font-bold uppercase print:text-[30px]">PASUKAN SUKARELAWAN SIMPANAN POLIS</h2>
+              <div className="text-[14px] font-bold mt-1 print:text-[14px]">
                 Daftar Kedatangan dan Jadual Elaun bagi Bulan: <span className="border-b border-black px-4">{selectedMonth} {selectedYear}</span>
               </div>
-              <div className="text-sm font-bold mt-2 flex justify-center items-center gap-8">
-                <span className="text-base">Nama Pasukan :</span>
-                <span className="text-2xl font-black tracking-widest">{selectedDistrict}</span>
+              <div className="text-[14px] font-bold mt-2 flex justify-center items-center gap-8 print:mt-1 print:gap-4">
+                <span className="text-[14px] print:text-[14px]">Nama Pasukan :</span>
+                <span className="text-[24px] font-black tracking-widest print:text-[16px]">{selectedDistrict}</span>
               </div>
             </div>
 
@@ -1619,32 +1741,46 @@ export default function App() {
                   </div>
                 </div>
               )}
-              <table className="w-full border-collapse border border-black text-[9px] text-center font-bold">
+              <table className="w-full border-collapse border border-black text-[9px] text-center font-bold table-fixed">
+                <colgroup>
+                  <col style={{ width: '2%' }} />
+                  <col style={{ width: '5%' }} />
+                  <col style={{ width: '5%' }} />
+                  <col style={{ width: '16.8%' }} />
+                  {Array(31).fill(0).map((_, i) => (
+                    <col key={i} style={{ width: '1.2%' }} />
+                  ))}
+                  <col style={{ width: '4%' }} />
+                  <col style={{ width: '4%' }} />
+                  <col style={{ width: '3%' }} />
+                  <col style={{ width: '3%' }} />
+                  <col style={{ width: '3%' }} />
+                  <col style={{ width: '6%' }} />
+                  <col style={{ width: '6%' }} />
+                  <col style={{ width: '4%' }} />
+                </colgroup>
                 <thead>
-                  <tr className="bg-gray-50">
-                    <th className="border border-black p-1 w-6" rowSpan={2}>Bil</th>
-                    <th className="border border-black p-1 w-16" rowSpan={2}>NO. BADAN</th>
-                    <th className="border border-black p-1 w-16" rowSpan={2}>Pangkat</th>
-                    <th className="border border-black p-1 w-48" rowSpan={2}>Nama</th>
-                    <th className="border border-black p-1" colSpan={31}>Jumlah jam bertugas / berlatih pada tarikh berikut</th>
-                    <th className="border border-black p-0.5 w-10 text-[8px] leading-tight font-bold" colSpan={2}>Jumlah<br/>kedatangan</th>
-                    <th className="border border-black p-0.5 w-10 text-[8px] leading-tight font-bold" rowSpan={2}>Jumlah<br/>Jam<br/>bertugas/<br/>berlatih</th>
-                    <th className="border border-black p-0.5 text-[10px] font-bold" colSpan={3}>ELAUN KENDERAAN</th>
-                    <th className="border border-black p-0.5 w-16 text-[8px] leading-tight font-bold" rowSpan={2}>Belanja Elaun Latihan<br/>(Peringatan A)</th>
-                    <th className="border border-black p-0.5 w-10 text-[8px] leading-tight font-bold" rowSpan={2}>Elaun<br/>kenderaan<br/>(Peringatan<br/>B)</th>
-                    <th className="border border-black p-0.5 w-16 text-[8px] leading-tight font-bold" rowSpan={2}>Jumlah Elaun yang akan<br/>di bayar</th>
-                    <th className="border border-black p-0.5 w-16 text-[8px] leading-tight font-bold" rowSpan={2}>Tanda tangan<br/>penerima</th>
+                  <tr className="bg-gray-50 h-[22px]">
+                    <th className="border border-black py-0 px-1" rowSpan={2}>Bil</th>
+                    <th className="border border-black py-0 px-1" rowSpan={2}>NO. BADAN</th>
+                    <th className="border border-black py-0 px-1" rowSpan={2}>Pangkat</th>
+                    <th className="border border-black py-0 px-1" rowSpan={2}>Nama</th>
+                    <th className="border border-black py-0 px-1" colSpan={31}>Jumlah jam bertugas / berlatih pada tarikh berikut</th>
+                    <th className="border border-black py-0 px-0.5 text-[8px] leading-tight font-bold" rowSpan={2}>Jumlah<br/>kedatangan</th>
+                    <th className="border border-black py-0 px-0.5 text-[8px] leading-tight font-bold" rowSpan={2}>Jumlah<br/>Jam<br/>bertugas/<br/>berlatih</th>
+                    <th className="border border-black py-0 px-0.5 text-[10px] font-bold" colSpan={3}>ELAUN KENDERAAN</th>
+                    <th className="border border-black py-0 px-0.5 text-[8px] leading-tight font-bold" rowSpan={2}>Belanja Elaun Latihan<br/>(Peringatan A)</th>
+                    <th className="border border-black py-0 px-0.5 text-[8px] leading-tight font-bold" rowSpan={2}>Jumlah Elaun yang akan<br/>di bayar</th>
+                    <th className="border border-black py-0 px-0.5 text-[8px] leading-tight font-bold" rowSpan={2}>Tanda tangan<br/>penerima</th>
                   </tr>
-                  <tr className="bg-gray-50">
-                    {daysArray.map(d => <th key={d} className="border border-black p-0.5 w-4">{d}</th>)}
-                    <th className="border border-black p-0.5 text-[7px] leading-tight font-bold">Total<br/>Penugasan</th>
-                    <th className="border border-black p-0.5 text-[7px] leading-tight font-bold">Total<br/>Hours<br/>Working</th>
-                    <th className="border border-black p-0.5 text-[7px] leading-tight font-bold">Jenis<br/>(Peringa<br/>tan B)</th>
-                    <th className="border border-black p-0.5 text-[7px] leading-tight font-bold">Jumlah tiap-<br/>tiap<br/>kedatangan</th>
-                    <th className="border border-black p-0.5 text-[7px] leading-tight font-bold">Elaun<br/>gantian<br/>tetap<br/>basikal</th>
+                  <tr className="bg-gray-50 h-[22px]">
+                    {daysArray.map(d => <th key={d} className="border border-black p-0 text-[8px]">{d}</th>)}
+                    <th className="border border-black py-0 px-0.5 text-[7px] leading-tight font-bold">Jenis<br/>(Peringa<br/>tan B)</th>
+                    <th className="border border-black py-0 px-0.5 text-[7px] leading-tight font-bold">Jumlah tiap-<br/>tiap<br/>kedatangan</th>
+                    <th className="border border-black py-0 px-0.5 text-[7px] leading-tight font-bold">Elaun<br/>gantian<br/>tetap<br/>basikal</th>
                   </tr>
                 </thead>
-                <tbody className="text-[12px]">
+                <tbody className="text-[12px] print:text-[9px]">
                   {Array.from({ length: 15 }).map((_, idx) => {
                     if (idx < 10) {
                       const noBadan = selectedNoBadanList[idx] || '';
@@ -1660,7 +1796,7 @@ export default function App() {
                       grandTotalPenugasan += kedatangan;
 
                       return (
-                        <tr key={idx} className="h-6">
+                        <tr key={idx} className="h-[28px] print:h-[18px]">
                           <td className="border border-black p-1">{idx + 1}</td>
                           <td className="border border-black p-0 relative">
                             <input 
@@ -1677,18 +1813,16 @@ export default function App() {
                             <span className="hidden print:block w-full text-center font-bold">{noBadan}</span>
                           </td>
                           <td className="border border-black p-1">{rank}</td>
-                          <td className="border border-black p-1 text-left truncate max-w-[120px] print:whitespace-nowrap print:overflow-visible print:max-w-none">{name || (noBadan ? 'NOT FOUND' : '')}</td>
+                          <td className="border border-black p-1 text-left truncate print:text-[8px] leading-tight max-w-[150px]">{name || (noBadan ? 'NOT FOUND' : '')}</td>
                           {dailyHours.map((h, i) => (
-                            <td key={i} className="border border-black p-0.5">{h || ''}</td>
+                            <td key={i} className="border border-black p-0 text-[10px]">{h || ''}</td>
                           ))}
                           <td className="border border-black p-1">{kedatangan || ''}</td>
                           <td className="border border-black p-1">{totalHours || ''}</td>
-                          <td className="border border-black p-1">{cappedHours || ''}</td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1">{noBadan ? rate.toFixed(2) : ''}</td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1">{noBadan ? allowance.toFixed(2) : ''}</td>
-                          <td className="border border-black p-1"></td>
                           <td className="border border-black p-1 font-bold">{noBadan ? allowance.toFixed(2) : ''}</td>
                           <td className="border border-black p-1"></td>
                         </tr>
@@ -1696,14 +1830,12 @@ export default function App() {
                     } else if (idx < 13) {
                       // Empty rows 11, 12, 13
                       return (
-                        <tr key={idx} className="h-6">
+                        <tr key={idx} className="h-[28px] print:h-[18px]">
                           <td className="border border-black p-1">{idx + 1}</td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1"></td>
-                          {Array(31).fill(0).map((_, i) => <td key={i} className="border border-black p-0.5"></td>)}
-                          <td className="border border-black p-1"></td>
-                          <td className="border border-black p-1"></td>
+                          {Array(31).fill(0).map((_, i) => <td key={i} className="border border-black p-0 text-[10px]"></td>)}
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1"></td>
@@ -1717,15 +1849,14 @@ export default function App() {
                     } else if (idx === 13) {
                       // RINGGIT Row (Bil 14)
                       return (
-                        <tr key={idx} className="h-6 font-bold">
+                        <tr key={idx} className="h-[28px] print:h-[18px] font-bold">
                           <td className="border border-black p-1">{idx + 1}</td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1"></td>
-                          <td className="border border-black p-1 text-left pl-4 uppercase" colSpan={38}>
+                          <td className="border border-black p-1 text-left pl-4 uppercase" colSpan={37}>
                             RINGGIT : {numberToMalayWords(grandTotalElaun)}
                           </td>
                           <td className="border border-black p-1">{grandTotalElaun.toFixed(2)}</td>
-                          <td className="border border-black p-1"></td>
                           <td className="border border-black p-1 font-bold">{grandTotalElaun.toFixed(2)}</td>
                           <td className="border border-black p-1"></td>
                         </tr>
@@ -1733,7 +1864,7 @@ export default function App() {
                     } else {
                       // Final Total Row (Bil 15)
                       return (
-                        <tr key={idx} className="h-6 font-bold">
+                        <tr key={idx} className="h-[28px] print:h-[18px] font-bold">
                           <td className="border border-black p-1">{idx + 1}</td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1"></td>
@@ -1744,15 +1875,14 @@ export default function App() {
                               const { dailyHours } = getPersonnelDailyHours(nb);
                               dayTotal += dailyHours[i] || 0;
                             });
-                            return <td key={i} className="border border-black p-0.5">{dayTotal || ''}</td>;
+                            return <td key={i} className="border border-black p-0 text-[10px]">{dayTotal || ''}</td>;
                           })}
-                          <td className="border border-black p-1" colSpan={2}>{grandTotalHoursWorked || ''}</td>
-                          <td className="border border-black p-1">{grandTotalCappedHours || ''}</td>
+                          <td className="border border-black p-1"></td>
+                          <td className="border border-black p-1">{grandTotalHoursWorked || ''}</td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1"></td>
-                          <td className="border border-black p-1"></td>
-                          <td className="border border-black p-1"></td>
+                          <td className="border border-black p-1">{grandTotalElaun.toFixed(2)}</td>
                           <td className="border border-black p-1 font-bold">{grandTotalElaun.toFixed(2)}</td>
                           <td className="border border-black p-1"></td>
                         </tr>
@@ -1775,16 +1905,16 @@ export default function App() {
               </datalist>
             </div>
 
-            <div className="mt-2 text-[9px] font-bold uppercase">
+            <div className="mt-2 print:mt-1 text-[9px] font-bold uppercase">
               JUMLAH JAM KEDATANGAN BAGI TIAP-TIAP KAWAD
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-8 text-[10px]">
-              <div className="space-y-8">
+            <div className="mt-2 print:mt-1 grid grid-cols-2 gap-4 text-[10px] print:text-[9px]">
+              <div className="space-y-4 print:space-y-2">
                 <div className="font-bold">(Pegawai Simpanan yang diwartakan atau Inspektor)</div>
-                <div className="pt-6 w-64"></div>
+                <div className="pt-4 print:pt-2 w-64"></div>
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1">
                 <div className="font-bold">PERINGATAN A : Elaun belania latihan yang terbanyak dalam tiap-tiap bulan ialah mengenai latihan/tugas 48 jam</div>
                 <div className="font-bold">PERINGATAN B : Elaun kenderaan ialah satu daripada berikut:</div>
                 <div className="grid grid-cols-3 gap-2">
@@ -1798,7 +1928,7 @@ export default function App() {
         </div>
 
         {/* Report 2: Voucher */}
-        <div className="print-page-container page-break-before pt-[188px] border-t-2 border-dashed border-gray-300 print:border-none">
+        <div className="print-page-container page-break-before pt-[188px] print:pt-0 border-t-2 border-dashed border-gray-300 print:border-none">
           <div className="flex justify-between items-start mb-6">
             <div className="text-xs font-bold underline">SSPDRM MELAKA - BAUCER NO :</div>
             <div className="text-xs font-bold">SPDRM MELAKA BR.NO: ...........................</div>
@@ -1806,14 +1936,14 @@ export default function App() {
 
           <table className="w-full border-collapse border border-black text-xs text-center font-bold">
             <thead>
-              <tr className="bg-gray-50 h-[30px]">
-                <th className="border border-black p-2 w-12">BIL</th>
-                <th className="border border-black p-2 w-32">NO KOD PVR</th>
-                <th className="border border-black p-2">NAMA</th>
-                <th className="border border-black p-2 w-40">NO AKAUN BANK</th>
-                <th className="border border-black p-2 w-48">NAMA BANK</th>
-                <th className="border border-black p-2 w-32">NO TELEFON</th>
-                <th className="border border-black p-2 w-32">JUMLAH ( RM )</th>
+              <tr className="bg-gray-50 h-[27px]">
+                <th className="border border-black p-1 w-12">BIL</th>
+                <th className="border border-black p-1 w-32">NO KOD PVR</th>
+                <th className="border border-black p-1">NAMA</th>
+                <th className="border border-black p-1 w-40">NO AKAUN BANK</th>
+                <th className="border border-black p-1 w-48">NAMA BANK</th>
+                <th className="border border-black p-1 w-32">NO TELEFON</th>
+                <th className="border border-black p-1 w-32">JUMLAH ( RM )</th>
               </tr>
             </thead>
             <tbody>
@@ -1831,7 +1961,7 @@ export default function App() {
                 }) || {}) : {};
 
                 return (
-                  <tr key={idx} className="h-[30px]">
+                  <tr key={idx} className="h-[30px] break-inside-avoid">
                     <td className="border border-black p-1">{idx + 1}</td>
                     <td className="border border-black p-2">{extra['NO KOD PVR'] || ''}</td>
                     <td className="border border-black p-2 text-center">{name}</td>
@@ -1869,6 +1999,69 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-100 p-4 sm:p-8 print:p-0 print:bg-white">
+      <style>{`
+        @media print {
+          @page {
+            size: A4 landscape;
+            margin: 10mm;
+          }
+          body {
+            -webkit-print-color-adjust: exact;
+            background-color: white !important;
+          }
+          .print-page-container {
+            page-break-after: always !important;
+            page-break-inside: avoid !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            box-sizing: border-box !important;
+            display: block !important;
+            height: auto !important;
+          }
+          .print-page-container:last-child {
+            page-break-after: auto !important;
+          }
+          #report-container {
+            border: none !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            width: 100% !important;
+            max-width: none !important;
+            margin: 0 !important;
+          }
+          table {
+            width: 100% !important;
+          }
+          th, td {
+            word-wrap: break-word !important;
+          }
+        }
+        
+        /* PDF Generation Compact Mode */
+        .pdf-compact-mode {
+          width: 1122px !important; /* A4 Landscape width at 96dpi */
+          padding: 15px !important;
+          background: white !important;
+          border: none !important;
+          box-shadow: none !important;
+          margin: 0 auto !important;
+        }
+        .pdf-compact-mode .print-page-container {
+          margin-bottom: 0 !important;
+          padding: 0 !important;
+          page-break-after: always !important;
+        }
+        .pdf-compact-mode .print-page-container:last-child {
+          page-break-after: auto !important;
+        }
+        .pdf-compact-mode table {
+          width: 100% !important;
+        }
+        .pdf-compact-mode th, .pdf-compact-mode td {
+          word-wrap: break-word !important;
+        }
+      `}</style>
       {/* Controls - Hidden when printing */}
       <div className="max-w-7xl mx-auto mb-6 bg-white p-6 rounded-xl shadow-sm border border-gray-200 print:hidden">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -1942,13 +2135,6 @@ export default function App() {
                     <option key={p.name} value={p.name}>{p.name} ({p.latestDistrict})</option>
                   ))}
                 </select>
-                <button 
-                  onClick={handlePrintCurrent}
-                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm print:hidden"
-                >
-                  <Printer className="w-4 h-4" />
-                  Print
-                </button>
               </>
             )}
 
@@ -1994,24 +2180,24 @@ export default function App() {
                   disabled={isGeneratingPDF}
                   className={`flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm ${isGeneratingPDF ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  {isGeneratingPDF ? (
+                  {isGeneratingPDF && printMode === 'CURRENT' ? (
                     <RefreshCw className="w-4 h-4 animate-spin" />
                   ) : (
                     <Download className="w-4 h-4" />
                   )}
-                  {isGeneratingPDF ? 'Generating...' : 'Save Current to PDF'}
+                  {isGeneratingPDF && printMode === 'CURRENT' ? 'Generating...' : 'Save Current PDF'}
                 </button>
                 <button 
                   onClick={handleSaveAllPDF}
                   disabled={isGeneratingPDF}
                   className={`flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm ${isGeneratingPDF ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  {isGeneratingPDF ? (
+                  {isGeneratingPDF && printMode === 'ALL' ? (
                     <RefreshCw className="w-4 h-4 animate-spin" />
                   ) : (
                     <Download className="w-4 h-4" />
                   )}
-                  {isGeneratingPDF ? 'Generating...' : 'Save All to PDF'}
+                  {isGeneratingPDF && printMode === 'ALL' ? 'Generating...' : 'Save All to PDF'}
                 </button>
               </div>
             </div>
@@ -2086,25 +2272,14 @@ export default function App() {
         </div>
       )}
 
-      <div id="report-container" className={`max-w-[1400px] mx-auto bg-white print:max-w-none print:shadow-none shadow-lg border-4 border-blue-600 print:border-none p-4 sm:p-8 print:p-0 overflow-x-auto ${printMode === 'ALL' ? 'pdf-mode' : ''}`}>
+      <div id="report-container" className={`max-w-[1400px] mx-auto bg-white print:max-w-none print:shadow-none shadow-lg border-4 border-blue-600 print:border-none p-4 sm:p-8 print:p-0 overflow-x-auto ${isGeneratingPDF ? 'pdf-compact-mode' : ''}`}>
         
         {/* Data Tables */}
         <div className="w-full overflow-x-auto">
           {(printMode === 'ALL' || activeTab === 'MONTHLY') && (
             <>
-              {activeTab === 'MONTHLY' && (
-                <div className="mb-4 flex justify-end print:hidden">
-                  <button 
-                    onClick={handlePrintCurrent}
-                    className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm"
-                  >
-                    <Printer className="w-4 h-4" />
-                    Print Monthly Report
-                  </button>
-                </div>
-              )}
               {/* Bulanan (Monthly) */}
-              <div className={`print-page-container mb-12 ${printMode === 'ALL' ? 'html2pdf__page-break page-break-after' : ''}`}>
+              <div className="print-page-container">
                 <div className="text-center mb-6">
                   <h2 className="text-xl sm:text-2xl font-bold uppercase tracking-wide text-gray-900">
                     SUKARELAWAN POLIS DIRAJA MALAYSIA KONTINJEN MELAKA
@@ -2122,8 +2297,13 @@ export default function App() {
                 {renderDailyTable()}
               </div>
 
-              {/* Mingguan (Weekly) */}
-              <div className={`print-page-container mb-12 ${printMode === 'ALL' ? 'html2pdf__page-break page-break-after' : ''}`}>
+              {/* Pangkat (Rank) - Moved to 2nd page */}
+              <div className="print-page-container">
+                {renderRankTable()}
+              </div>
+
+              {/* Mingguan (Weekly) - Moved to 3rd page */}
+              <div className="print-page-container">
                 <div className="text-center mb-6">
                   <h2 className="text-xl sm:text-2xl font-bold uppercase tracking-wide text-gray-900">
                     SUKARELAWAN POLIS DIRAJA MALAYSIA KONTINJEN MELAKA
@@ -2140,27 +2320,11 @@ export default function App() {
                 </div>
                 {renderWeeklyTable()}
               </div>
-
-              {/* Pangkat (Rank) */}
-              <div className={`print-page-container mb-12 ${printMode === 'ALL' ? 'html2pdf__page-break page-break-after' : ''}`}>
-                {renderRankTable()}
-              </div>
             </>
           )}
 
           {(printMode === 'ALL' || activeTab === 'PERSONAL') && (
-            <div className={`print-page-container ${printMode === 'ALL' ? 'html2pdf__page-break page-break-after' : ''}`}>
-              {activeTab === 'PERSONAL' && (
-                <div className="mb-4 flex justify-end print:hidden">
-                  <button 
-                    onClick={handlePrintCurrent}
-                    className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm"
-                  >
-                    <Printer className="w-4 h-4" />
-                    Print Personal Report
-                  </button>
-                </div>
-              )}
+            <div className="print-page-container">
               <div className="text-center mb-6">
                 <h2 className="text-xl sm:text-2xl font-bold uppercase tracking-wide text-gray-900">
                   SUKARELAWAN SIMPANAN POLIS DIRAJA MALAYSIA (SSPDRM)
@@ -2172,7 +2336,9 @@ export default function App() {
                   DAERAH : <span className="ml-2">{selectedDistrict}</span>
                 </div>
                 <div className="text-xl sm:text-2xl font-bold mt-4 uppercase">
-                  JUMLAH JAM PENUGSAN BULANAN BAGI TAHUN <span className="ml-2 border-b border-black pb-1 px-4">{selectedYear}</span>
+                  JUMLAH JAM PENUGSAN BULANAN BAGI TAHUN <span className="ml-2 border-b border-black pb-1 px-4">
+                    {selectedPerson !== 'ALL' ? `${selectedYear - 2} - ${selectedYear}` : selectedYear}
+                  </span>
                 </div>
               </div>
               {renderPersonalTable()}
@@ -2180,24 +2346,13 @@ export default function App() {
           )}
 
           {(printMode === 'ALL' || activeTab === 'ALLOWANCE') && (
-            <div className={`print-page-container ${printMode === 'ALL' ? 'html2pdf__page-break page-break-after' : ''}`}>
-              {activeTab === 'ALLOWANCE' && (
-                <div className="mb-4 flex justify-end print:hidden">
-                  <button 
-                    onClick={handlePrintCurrent}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm"
-                  >
-                    <Printer className="w-4 h-4" />
-                    Print Paysheet
-                  </button>
-                </div>
-              )}
+            <div className="print-page-container">
               {renderAllowanceTable(false)}
             </div>
           )}
 
           {(printMode === 'ALL' || activeTab === 'ALLOWANCE_LIVE') && (
-            <div className={`print-page-container ${printMode === 'ALL' ? 'html2pdf__page-break page-break-after' : ''}`}>
+            <div className="print-page-container">
               {activeTab === 'ALLOWANCE_LIVE' && (
                 <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between print:hidden">
                   <div className="flex items-center gap-2">
@@ -2206,21 +2361,12 @@ export default function App() {
                       <span className="text-xs font-medium text-blue-800">Live Data Status: {liveDataStatus}</span>
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={fetchVoucherDataLive}
-                      className="text-[10px] bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 transition-colors"
-                    >
-                      Refresh Live Data
-                    </button>
-                    <button 
-                      onClick={handlePrintCurrent}
-                      className="text-[10px] bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700 transition-colors flex items-center gap-1"
-                    >
-                      <Printer className="w-3 h-3" />
-                      Print
-                    </button>
-                  </div>
+                  <button 
+                    onClick={fetchVoucherDataLive}
+                    className="text-[10px] bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700 transition-colors"
+                  >
+                    Refresh Live Data
+                  </button>
                 </div>
               )}
               {renderAllowanceTable(true)}
