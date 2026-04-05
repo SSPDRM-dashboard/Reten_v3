@@ -1385,8 +1385,8 @@ export default function App() {
             <div className="w-64">
               <div className="mb-12 text-center">Disahkan oleh</div>
               <div className="border-b border-black w-full mb-2"></div>
-              <div>(Nama & Jawatan)</div>
-              <div>Tarikh</div>
+              <div className="text-center">(Nama & Jawatan)</div>
+              <div className="text-center">Tarikh</div>
             </div>
           </div>
         </div>
@@ -1470,11 +1470,13 @@ export default function App() {
         </table>
         
         {/* Signature Area */}
-        <div className="mt-16 text-left text-sm font-bold print:block">
-          <div className="mb-16">Disahkan oleh</div>
-          <div className="border-b border-black w-64 mb-2"></div>
-          <div>(Nama & Jawatan)</div>
-          <div>Tarikh</div>
+        <div className="mt-16 text-sm font-bold print:block">
+          <div className="w-64">
+            <div className="mb-16 text-center">Disahkan oleh</div>
+            <div className="border-b border-black w-full mb-2"></div>
+            <div className="text-center">(Nama & Jawatan)</div>
+            <div className="text-center">Tarikh</div>
+          </div>
         </div>
       </div>
     );
