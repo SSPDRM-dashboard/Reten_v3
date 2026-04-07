@@ -652,12 +652,14 @@ export default function App() {
             noBadanFromRank = rankParts[0];
           }
           const finalNoBadan = noBadanFromName || noBadanFromRank;
+          const balaiStr = idx > 0 && row[idx - 1] ? String(row[idx - 1]).trim().toUpperCase() : '';
           
           if (!personalMap.has(personName)) {
             personalMap.set(personName, {
               name: personName,
               rank: currentRank,
               noBadan: finalNoBadan,
+              balai: balaiStr,
               years: {
                 [selectedYear]: { months: Array(12).fill(0), total: 0 },
                 [selectedYear - 1]: { months: Array(12).fill(0), total: 0 },
@@ -687,6 +689,7 @@ export default function App() {
               pData.latestDateValue = rowDateValue;
               pData.rank = currentRank;
               pData.noBadan = finalNoBadan;
+              if (balaiStr) pData.balai = balaiStr;
             }
           }
           
@@ -1408,6 +1411,7 @@ export default function App() {
               <th className="border border-black p-2 w-32">NO. BADAN</th>
               <th className="border border-black p-2 w-24">PANGKAT</th>
               <th className="border border-black p-2 text-left min-w-[200px]">NAMA</th>
+              <th className="border border-black p-2 w-32">BALAI PENDAFTARAN</th>
               {monthNames.map(m => (
                 <th key={m} className="border border-black p-1 w-12">{m}</th>
               ))}
@@ -1445,6 +1449,7 @@ export default function App() {
                   <td className="border border-black p-1">{finalNoBadan}</td>
                   <td className="border border-black p-1">{pangkat}</td>
                   <td className="border border-black p-1 text-left pl-2">{cleanName}</td>
+                  <td className="border border-black p-1">{person.balai || ''}</td>
                   {person.months.map((hours: number, i: number) => (
                     <td key={i} className="border border-black p-1">{hours || 0}</td>
                   ))}
@@ -1454,12 +1459,12 @@ export default function App() {
             })}
             {displayedPersonnel.length === 0 && (
               <tr>
-                <td colSpan={17} className="border border-black p-4 text-gray-500">Tiada rekod anggota dijumpai untuk tahun {selectedYear}</td>
+                <td colSpan={18} className="border border-black p-4 text-gray-500">Tiada rekod anggota dijumpai untuk tahun {selectedYear}</td>
               </tr>
             )}
             {displayedPersonnel.length > 0 && selectedPerson === 'ALL' && (
               <tr className="bg-gray-50 print:bg-transparent font-bold">
-                <td className="border border-black p-2 text-right pr-4" colSpan={4}>JUMLAH KESELURUHAN</td>
+                <td className="border border-black p-2 text-right pr-4" colSpan={5}>JUMLAH KESELURUHAN</td>
                 {monthTotals.map((total, i) => (
                   <td key={i} className="border border-black p-1 text-blue-600 print:text-black">{total || 0}</td>
                 ))}
