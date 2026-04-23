@@ -641,22 +641,19 @@ export default function App() {
           const personName = String(row[idx]).trim().toUpperCase();
           const currentRank = String(rankStr || '').toUpperCase().trim();
           
-          // Extract NO. BADAN from Name or Rank
-          const nameMatch = personName.match(/\d+/);
-          const noBadanFromName = nameMatch ? nameMatch[0] : '';
-          let noBadanFromRank = '';
-          const rankParts = currentRank.split(' ');
-          if (rankParts.length > 1) {
-            noBadanFromRank = rankParts.slice(1).join(' ');
-          } else if (rankParts.length === 1 && /^\d+$/.test(rankParts[0])) {
-            noBadanFromRank = rankParts[0];
-          }
-          const finalNoBadan = noBadanFromName || noBadanFromRank;
+          // Ultra-aggressive NO. BADAN extraction: find any numeric sequence in name OR rank
+          const numMatch = (personName + " " + currentRank).match(/\d+/);
+          const finalNoBadan = numMatch ? numMatch[0] : '';
+          
+          // Ultra-aggressive name normalization for key: Remove EVERYTHING except letters
+          const cleanNameLong = personName.replace(finalNoBadan, '').replace(/\s+/g, ' ').trim();
+          const cleanNameForKey = cleanNameLong.replace(/[^A-Z]/g, '');
+          const normalizedKey = `${finalNoBadan}|${cleanNameForKey}`;
           const balaiStr = idx > 0 && row[idx - 1] ? String(row[idx - 1]).trim().toUpperCase() : '';
           
-          if (!personalMap.has(personName)) {
-            personalMap.set(personName, {
-              name: personName,
+          if (!personalMap.has(normalizedKey)) {
+            personalMap.set(normalizedKey, {
+              name: cleanNameLong,
               rank: currentRank,
               noBadan: finalNoBadan,
               balai: balaiStr,
@@ -675,7 +672,12 @@ export default function App() {
               }
             });
           } else {
-            const pData = personalMap.get(personName)!;
+            const pData = personalMap.get(normalizedKey)!;
+            // Prefer name version with spaces if current doesn't have them
+            if (cleanNameLong.includes(' ') && !pData.name.includes(' ')) {
+              pData.name = cleanNameLong;
+            }
+            
             if (districtStr) {
               const dStr = String(districtStr).trim().toUpperCase();
               pData.districts.add(dStr);
@@ -693,7 +695,7 @@ export default function App() {
             }
           }
           
-          const pData = personalMap.get(personName)!;
+          const pData = personalMap.get(normalizedKey)!;
           if (rowMonth >= 0 && rowMonth < 12) {
             if (pData.years[rowYear]) {
               pData.years[rowYear].months[rowMonth] += totalHours;
@@ -806,12 +808,27 @@ export default function App() {
         if (userRole.toLowerCase() !== 'admin' && (p.name.includes(loggedInName) || loggedInName.includes(p.name))) return true;
 
         if (selectedPerson === 'ALL') {
-          const districtsThisYear = p.districtsByYear?.[selectedYear] || new Set();
-          const isDistrictThisYear = Array.from(districtsThisYear).some(d => isDistrictMatch(d, selectedDistrict));
-          if (!isDistrictThisYear) return false;
+          // Broaden filter: Include if they worked in this district in ANY of the past 3 years
+          let isMatch = false;
+          for (let y = selectedYear; y >= selectedYear - 2; y--) {
+            const districtsYear = p.districtsByYear?.[y] || new Set();
+            if (Array.from(districtsYear).some(d => isDistrictMatch(d, selectedDistrict))) {
+              isMatch = true;
+              break;
+            }
+          }
+          if (!isMatch) return false;
         } else {
-          const isDistrict = Array.from(p.districts as Set<string>).some(d => isDistrictMatch(d, selectedDistrict));
-          if (!isDistrict) return false;
+          // For single person selection, also check any year in the 3-year window
+          let isMatch = false;
+          for (let y = selectedYear; y >= selectedYear - 2; y--) {
+            const districtsYear = p.districtsByYear?.[y] || new Set();
+            if (Array.from(districtsYear).some(d => isDistrictMatch(d, selectedDistrict))) {
+              isMatch = true;
+              break;
+            }
+          }
+          if (!isMatch) return false;
         }
 
         if (searchNoBadan.trim() !== '') {
@@ -1321,43 +1338,42 @@ export default function App() {
     const monthTotals = Array(12).fill(0);
     let grandTotal = 0;
     displayedPersonnel.forEach(p => {
-      p.months.forEach((m: number, i: number) => {
-        monthTotals[i] += m;
-        grandTotal += m;
+      // In "ALL" view, we only sum the selected year
+      const yearData = p.years && p.years[selectedYear] ? p.years[selectedYear] : { months: Array(12).fill(0), total: 0 };
+      yearData.months.forEach((m: number, i: number) => {
+        monthTotals[i] += (m || 0);
+        grandTotal += (m || 0);
       });
     });
 
     if (selectedPerson !== 'ALL' && displayedPersonnel.length > 0) {
       const person = displayedPersonnel[0];
-      const nameMatch = person.name.match(/\d+/);
-      const noBadanFromName = nameMatch ? nameMatch[0] : '';
-      const cleanName = person.name.replace(noBadanFromName, '').replace(/\s+/g, ' ').trim();
       
+      // Extract PANGKAT from Rank field (cleaning it for display)
       let pangkat = person.rank;
-      let noBadanFromRank = '';
       const rankParts = person.rank.split(' ');
       if (rankParts.length > 1) {
         pangkat = rankParts[0];
-        noBadanFromRank = rankParts.slice(1).join(' ');
       } else if (rankParts.length === 1 && /^\d+$/.test(rankParts[0])) {
-        noBadanFromRank = rankParts[0];
-        pangkat = '';
+        pangkat = ''; 
       }
-      const finalNoBadan = noBadanFromName || noBadanFromRank;
 
       return (
         <div className="w-full">
-          <div className="w-full flex font-bold mb-2 text-[20px] mt-2">
+          <div className="w-full flex font-bold mb-2 text-[25px] mt-2">
             <div className="w-24 flex-shrink-0"></div>
-            <div className="flex-1 grid grid-cols-12 gap-0">
-              <div className="col-span-8 text-left pl-2">NAMA : {cleanName}</div>
-              <div className="col-span-4 text-left pl-2">NO.BADAN : {pangkat} {finalNoBadan}</div>
+            <div className="flex-1">
+              <div className="grid grid-cols-12 gap-0 mb-1">
+                <div className="col-span-8 text-left pl-2">NAMA : {person.name}</div>
+                <div className="col-span-4 text-left pl-2">NO.BADAN : {pangkat} {person.noBadan}</div>
+              </div>
+              <div className="text-left pl-2 uppercase">BALAI BERTUGAS : {person.balai || ''}</div>
             </div>
             <div className="w-24 flex-shrink-0"></div>
           </div>
 
-          <div className="space-y-2">
-            {[selectedYear, selectedYear - 1, selectedYear - 2].map((year) => {
+          <div className="space-y-2 mt-8">
+            {[selectedYear - 2, selectedYear - 1, selectedYear].map((year) => {
               const yearData = person.years && person.years[year] ? person.years[year] : { months: Array(12).fill(0), total: 0 };
               return (
                 <table key={year} className="w-full border-collapse border border-black text-center font-bold text-[17px]">
@@ -1412,6 +1428,7 @@ export default function App() {
               <th className="border border-black p-2 w-24">PANGKAT</th>
               <th className="border border-black p-2 text-left min-w-[200px]">NAMA</th>
               <th className="border border-black p-2 w-32">BALAI PENDAFTARAN</th>
+              <th className="border border-black p-2 w-20">TAHUN</th>
               {monthNames.map(m => (
                 <th key={m} className="border border-black p-1 w-12">{m}</th>
               ))}
@@ -1420,51 +1437,40 @@ export default function App() {
           </thead>
           <tbody>
             {displayedPersonnel.map((person, idx) => {
-              // Extract NO. BADAN from Name (e.g., "12345 JOHN DOE" or "JOHN DOE 12345")
-              const nameMatch = person.name.match(/\d+/);
-              const noBadanFromName = nameMatch ? nameMatch[0] : '';
-              const cleanName = person.name.replace(noBadanFromName, '').replace(/\s+/g, ' ').trim();
-              
-              // Extract PANGKAT from Rank field
+              // Extract PANGKAT from Rank field (cleaning it for display if it contains No Badan)
               let pangkat = person.rank;
-              let noBadanFromRank = '';
-              
               const rankParts = person.rank.split(' ');
               if (rankParts.length > 1) {
                 pangkat = rankParts[0];
-                noBadanFromRank = rankParts.slice(1).join(' ');
-              } else if (rankParts.length === 1) {
-                if (/^\d+$/.test(rankParts[0])) {
-                  noBadanFromRank = rankParts[0];
-                  pangkat = ''; // Rank is just a number?
-                }
+              } else if (rankParts.length === 1 && /^\d+$/.test(rankParts[0])) {
+                pangkat = ''; 
               }
 
-              // Final decision: Use number from name if available, otherwise from rank
-              const finalNoBadan = noBadanFromName || noBadanFromRank;
+              const yearData = person.years && person.years[selectedYear] ? person.years[selectedYear] : { months: Array(12).fill(0), total: 0 };
 
               return (
                 <tr key={idx} className="even:bg-gray-50/50 print:even:bg-transparent break-inside-avoid">
                   <td className="border border-black p-1">{idx + 1}</td>
-                  <td className="border border-black p-1">{finalNoBadan}</td>
+                  <td className="border border-black p-1">{person.noBadan}</td>
                   <td className="border border-black p-1">{pangkat}</td>
-                  <td className="border border-black p-1 text-left pl-2">{cleanName}</td>
+                  <td className="border border-black p-1 text-left pl-2">{person.name}</td>
                   <td className="border border-black p-1">{person.balai || ''}</td>
-                  {person.months.map((hours: number, i: number) => (
+                  <td className="border border-black p-1">{selectedYear}</td>
+                  {yearData.months.map((hours: number, i: number) => (
                     <td key={i} className="border border-black p-1">{hours || 0}</td>
                   ))}
-                  <td className="border border-black p-1 font-bold bg-gray-50 print:bg-transparent">{person.total}</td>
+                  <td className="border border-black p-1 font-bold bg-gray-50 print:bg-transparent">{yearData.total}</td>
                 </tr>
               );
             })}
             {displayedPersonnel.length === 0 && (
               <tr>
-                <td colSpan={18} className="border border-black p-4 text-gray-500">Tiada rekod anggota dijumpai untuk tahun {selectedYear}</td>
+                <td colSpan={19} className="border border-black p-4 text-gray-500">Tiada rekod anggota dijumpai untuk tahun {selectedYear}</td>
               </tr>
             )}
             {displayedPersonnel.length > 0 && selectedPerson === 'ALL' && (
               <tr className="bg-gray-50 print:bg-transparent font-bold">
-                <td className="border border-black p-2 text-right pr-4" colSpan={5}>JUMLAH KESELURUHAN</td>
+                <td className="border border-black p-2 text-right pr-4" colSpan={6}>JUMLAH KESELURUHAN</td>
                 {monthTotals.map((total, i) => (
                   <td key={i} className="border border-black p-1 text-blue-600 print:text-black">{total || 0}</td>
                 ))}
