@@ -1610,7 +1610,7 @@ export default function App() {
 
       // Find the person in processedData.personal first to get their name
       const person = processedData.personal.find(p => {
-        const pNoStr = String(p.name).replace(/[^0-9]/g, '');
+        const pNoStr = String(p.noBadan).replace(/[^0-9]/g, '');
         if (!pNoStr) return false;
         const pNo = parseInt(pNoStr, 10);
         const tNo = parseInt(targetNo, 10);
@@ -1921,11 +1921,11 @@ export default function App() {
               <datalist id="personnel-list">
                 {processedData.personal
                   .filter(p => {
-                    const num = String(p.name).replace(/[^0-9]/g, '');
-                    return !selectedNoBadanList.includes(num);
+                    const num = String(p.noBadan).replace(/[^0-9]/g, '');
+                    return !!num && !selectedNoBadanList.includes(num);
                   })
                   .map((p, i) => {
-                    const num = String(p.name).replace(/[^0-9]/g, '');
+                    const num = String(p.noBadan).replace(/[^0-9]/g, '');
                     // Show name and district in the label to help user identify the person
                     return num ? <option key={i} value={num}>{p.name} ({p.latestDistrict})</option> : null;
                   })}
