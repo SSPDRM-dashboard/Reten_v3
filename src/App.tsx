@@ -47,7 +47,7 @@ const months = [
   'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'
 ];
 
-const districts = ['ALOR GAJAH', 'MELAKA TENGAH', 'JASIN', 'IPK SSPDRM'];
+const districts = ['SEMUA DAERAH', 'ALOR GAJAH', 'MELAKA TENGAH', 'JASIN', 'IPK SSPDRM'];
 const years = [2021, 2022, 2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030];
 
 // ==========================================
@@ -268,7 +268,8 @@ export default function App() {
                   'No Badan': noBadan,
                   'Duty Date': row[15] || '',
                   'Hours': row[18] || '',
-                  'District': row[1] || '' 
+                  'District': row[1] || '',
+                  'Pangkat': row[14] || ''
                 };
               }).filter(Boolean);
               setAttendanceDataLive(mapped);
@@ -544,6 +545,8 @@ export default function App() {
         if (colIndices.hours === -1) colIndices.hours = 11;
 
         colIndices.rank = row.findIndex(c => String(c).toUpperCase().includes('PANGKAT'));
+        if (colIndices.rank === -1) colIndices.rank = 14; // Fallback to Column O
+
         colIndices.colT = row.findIndex(c => String(c).toUpperCase().includes('NYATAKAN') || String(c).toUpperCase().includes('LAIN-LAIN TUGAS') && !String(c).toUpperCase().includes('JENIS'));
         break;
       }
@@ -555,6 +558,7 @@ export default function App() {
     }
 
     const isDistrictMatch = (rowDistrict: any, targetDistrict: string) => {
+      if (targetDistrict === 'SEMUA DAERAH') return true;
       if (!rowDistrict || !targetDistrict) return false;
       const s = String(rowDistrict).trim().toUpperCase();
       const t = targetDistrict.trim().toUpperCase();
@@ -807,6 +811,11 @@ export default function App() {
         if (selectedPerson !== 'ALL' && p.name === selectedPerson) return true;
         if (userRole.toLowerCase() !== 'admin' && (p.name.includes(loggedInName) || loggedInName.includes(p.name))) return true;
 
+        if (searchNoBadan.trim() !== '') {
+          const searchTerm = searchNoBadan.trim().toUpperCase();
+          return (p.noBadan || '').toUpperCase().includes(searchTerm) || (p.name || '').toUpperCase().includes(searchTerm);
+        }
+
         if (selectedPerson === 'ALL') {
           // Broaden filter: Include if they worked in this district in ANY of the past 3 years
           let isMatch = false;
@@ -831,9 +840,6 @@ export default function App() {
           if (!isMatch) return false;
         }
 
-        if (searchNoBadan.trim() !== '') {
-          return (p.noBadan || '').includes(searchNoBadan.trim());
-        }
         return true;
       })
       .sort((a, b) => {
@@ -1529,7 +1535,7 @@ export default function App() {
 
         // Find the person in processedData.personal first to get their name and rank (consistent with backup)
         const person = processedData.personal.find(p => {
-          const pNoStr = String(p.name).replace(/[^0-9]/g, '');
+          const pNoStr = String(p.noBadan).replace(/[^0-9]/g, '');
           if (!pNoStr) return false;
           const pNo = parseInt(pNoStr, 10);
           const tNo = parseInt(targetNo, 10);
@@ -1550,8 +1556,15 @@ export default function App() {
         attendanceDataLive.forEach(row => {
           if (normalize(row['No Badan']) !== targetNo) return;
           
-          // Apply district filtering (consistent with backup)
-          if (!isDistrictMatch(row['District'], selectedDistrict)) return;
+          if (!rank && row['Pangkat']) {
+            rank = String(row['Pangkat']).trim();
+          }
+          if (!name && row['No Badan']) {
+            name = String(row['No Badan']).replace(/[0-9]/g, '').trim();
+          }
+          
+          // District filtering removed to ensure searched members from other districts show data correctly
+          
           
           const dateStr = String(row['Duty Date'] || '');
           const hours = parseFloat(String(row['Hours'] || '0')) || 0;
@@ -1633,7 +1646,8 @@ export default function App() {
       rawData.slice(headerRowIndex + 1).forEach((row) => {
         if (!Array.isArray(row)) return;
         
-        if (!isDistrictMatch(row[distIdx], selectedDistrict)) return;
+        // District filtering removed to ensure searched members from other districts show data correctly
+
 
         const dateStr = String(row[dateIdx] || '');
         let rowYear = -1, rowMonth = -1, rowDay = -1;
