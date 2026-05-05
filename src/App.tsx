@@ -1035,10 +1035,10 @@ export default function App() {
           allowTaint: true,
           scrollX: 0,
           scrollY: 0,
-          windowWidth: 1122
+          windowWidth: 1400
         },
         jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape', compress: true },
-        pagebreak:    { mode: ['css', 'legacy'] }
+        pagebreak:    { mode: ['css', 'legacy'], avoid: ['.break-inside-avoid', 'tr'] }
       };
  
       try {
@@ -1094,10 +1094,10 @@ export default function App() {
           allowTaint: true,
           scrollX: 0,
           scrollY: 0,
-          windowWidth: 1122 // Ensure a consistent width for scaling
+          windowWidth: 1400 // Ensure a consistent width for scaling
         },
         jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape', compress: true },
-        pagebreak:    { mode: ['css', 'legacy'] }
+        pagebreak:    { mode: ['css', 'legacy'], avoid: ['.break-inside-avoid', 'tr'] }
       };
 
       try {
@@ -1207,7 +1207,7 @@ export default function App() {
       </thead>
       <tbody>
         {dailyWithTotals.map((row) => (
-          <tr key={row.id} className="even:bg-gray-50/50 print:even:bg-transparent break-inside-avoid">
+          <tr key={row.id} className="even:bg-gray-50 print:even:bg-transparent break-inside-avoid">
             <td className="border border-black p-1 font-bold">{row.id}</td>
             <td className="border border-black p-1 text-left font-bold pl-2">{row.name}</td>
             {row.days.map((val, idx) => (
@@ -1254,7 +1254,7 @@ export default function App() {
       </thead>
       <tbody>
         {weeklyWithTotals.map((row) => (
-          <tr key={row.id} className="even:bg-gray-50/50 print:even:bg-transparent break-inside-avoid">
+          <tr key={row.id} className="even:bg-gray-50 print:even:bg-transparent break-inside-avoid">
             <td className="border border-black p-1 print:p-0.5">{row.id}</td>
             <td className="border border-black p-1 print:p-0.5 text-left pl-2">{row.name}</td>
             {row.weeks.map((val, idx) => (
@@ -1315,7 +1315,7 @@ export default function App() {
       </thead>
       <tbody>
         {rankWithTotals.map((row) => (
-          <tr key={row.id} className="even:bg-gray-50/50 print:even:bg-transparent break-inside-avoid">
+          <tr key={row.id} className="even:bg-gray-50 print:even:bg-transparent break-inside-avoid">
             <td className="border border-black p-1">{row.id}</td>
             <td className="border border-black p-1 text-left pl-2">{row.name}</td>
             {row.ranks.map((val, idx) => (
@@ -1394,9 +1394,12 @@ export default function App() {
             <div className="flex-1">
               <div className="grid grid-cols-12 gap-0 mb-1">
                 <div className="col-span-8 text-left pl-2">NAMA : {person.name}</div>
-                <div className="col-span-4 text-left pl-2">NO.BADAN : {pangkat} {person.noBadan}</div>
+                <div className="col-span-4 text-left pl-2">NO.BADAN : {person.noBadan}</div>
               </div>
-              <div className="text-left pl-2 uppercase">BALAI BERTUGAS : {person.balai || ''}</div>
+              <div className="grid grid-cols-12 gap-0 mb-1">
+                <div className="col-span-8 text-left pl-2 uppercase">BALAI BERTUGAS : {person.balai || ''}</div>
+                <div className="col-span-4 text-left pl-2">PANGKAT : {pangkat}</div>
+              </div>
             </div>
             <div className="w-24 flex-shrink-0"></div>
           </div>
@@ -1478,7 +1481,7 @@ export default function App() {
               const yearData = person.years && person.years[selectedYear] ? person.years[selectedYear] : { months: Array(12).fill(0), total: 0 };
 
               return (
-                <tr key={idx} className="even:bg-gray-50/50 print:even:bg-transparent break-inside-avoid">
+                <tr key={idx} className="even:bg-gray-50 print:even:bg-transparent break-inside-avoid">
                   <td className="border border-black p-1">{idx + 1}</td>
                   <td className="border border-black p-1">{person.noBadan}</td>
                   <td className="border border-black p-1">{pangkat}</td>
@@ -2127,7 +2130,7 @@ export default function App() {
 
             <div className="overflow-x-auto relative">
               {isLoading && (
-                <div className="absolute inset-0 bg-white/50 flex items-center justify-center z-20 print:hidden">
+                <div className="absolute inset-0 flex items-center justify-center z-20 print:hidden" style={{ backgroundColor: 'rgba(255, 255, 255, 0.5)' }}>
                   <div className="flex flex-col items-center gap-2">
                     <RefreshCw className="animate-spin text-blue-600" size={32} />
                     <span className="text-xs font-bold text-blue-600 uppercase tracking-widest">Fetching Data...</span>
@@ -2321,6 +2324,7 @@ export default function App() {
         </div>
 
         {/* Report 2: Voucher */}
+        <div className="html2pdf__page-break"></div>
         <div className="print-page-container page-break-before pt-[188px] print:pt-0 border-t-2 border-dashed border-gray-300 print:border-none">
           <div className="flex justify-between items-start mb-6">
             <div className="text-xs font-bold underline">SSPDRM MELAKA - BAUCER NO :</div>
@@ -2433,12 +2437,78 @@ export default function App() {
         
         /* PDF Generation Compact Mode */
         .pdf-compact-mode {
-          width: 1122px !important; /* A4 Landscape width at 96dpi */
+          width: 1400px !important; /* Expanded width to prevent cutting off table */
           padding: 15px !important;
           background: white !important;
           border: none !important;
           box-shadow: none !important;
           margin: 0 auto !important;
+        }
+        .pdf-compact-mode * {
+          box-shadow: none !important;
+        }
+        .pdf-compact-mode .print\\:hidden,
+        .pdf-compact-mode [class*="print:hidden"] {
+          display: none !important;
+        }
+        .pdf-compact-mode [class*="print:pt-0"] {
+          padding-top: 0 !important;
+        }
+        .pdf-compact-mode [class*="print:pt-2"] {
+          padding-top: 0.5rem !important;
+        }
+        .pdf-compact-mode [class*="print:pb-0"] {
+          padding-bottom: 0 !important;
+        }
+        .pdf-compact-mode [class*="print:p-0"] {
+          padding: 0 !important;
+        }
+        .pdf-compact-mode [class*="print:-mt-[45px]"] {
+          margin-top: -45px !important;
+        }
+        .pdf-compact-mode [class*="print:mt-1"] {
+          margin-top: 0.25rem !important;
+        }
+        .pdf-compact-mode [class*="print:border-none"] {
+          border: none !important;
+        }
+        .pdf-compact-mode [class*="print:bg-transparent"] {
+          background-color: transparent !important;
+        }
+        .pdf-compact-mode [class*="print:bg-white"] {
+          background-color: white !important;
+        }
+        .pdf-compact-mode [class*="print:shadow-none"] {
+          box-shadow: none !important;
+        }
+        .pdf-compact-mode [class*="print:max-w-none"] {
+          max-width: none !important;
+        }
+        .pdf-compact-mode [class*="print:h-[18px]"] {
+          height: 18px !important;
+        }
+        .pdf-compact-mode [class*="print:text-black"] {
+          color: black !important;
+        }
+        .pdf-compact-mode [class*="print:text-[8px]"] { font-size: 8px !important; line-height: 8px !important; }
+        .pdf-compact-mode [class*="print:text-[9px]"] { font-size: 9px !important; line-height: 9px !important; }
+        .pdf-compact-mode [class*="print:text-[11px]"] { font-size: 11px !important; line-height: 11px !important; }
+        .pdf-compact-mode [class*="print:text-[14px]"] { font-size: 14px !important; line-height: 14px !important; }
+        .pdf-compact-mode [class*="print:text-[16px]"] { font-size: 16px !important; line-height: 16px !important; }
+        .pdf-compact-mode [class*="print:text-[30px]"] { font-size: 30px !important; line-height: 30px !important; }
+        .pdf-compact-mode [class*="print:gap-4"] { gap: 1rem !important; }
+        .pdf-compact-mode [class*="print:space-y-2"] > :not([hidden]) ~ :not([hidden]) {
+          --tw-space-y-reverse: 0;
+          margin-top: calc(0.5rem * calc(1 - var(--tw-space-y-reverse))) !important;
+          margin-bottom: calc(0.5rem * var(--tw-space-y-reverse)) !important;
+        }
+        .pdf-compact-mode .overflow-x-auto {
+          overflow: visible !important;
+          overflow-x: visible !important;
+        }
+        .pdf-compact-mode .page-break-before {
+          page-break-before: always !important;
+          break-before: page !important;
         }
         .pdf-compact-mode .print-page-container {
           margin-bottom: 0 !important;
@@ -2750,13 +2820,13 @@ export default function App() {
           )}
 
           {(printMode === 'ALL' || activeTab === 'ALLOWANCE') && (
-            <div className="print-page-container">
+            <React.Fragment>
               {renderAllowanceTable(false)}
-            </div>
+            </React.Fragment>
           )}
 
           {(printMode === 'ALL' || activeTab === 'ALLOWANCE_LIVE') && (
-            <div className="print-page-container">
+            <React.Fragment>
               {activeTab === 'ALLOWANCE_LIVE' && (
                 <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between print:hidden">
                   <div className="flex items-center gap-2">
@@ -2774,7 +2844,7 @@ export default function App() {
                 </div>
               )}
               {renderAllowanceTable(true)}
-            </div>
+            </React.Fragment>
           )}
 
           {(printMode === 'ALL' || activeTab === 'PENYALUR_MAKLUMAT') && (
@@ -2800,7 +2870,7 @@ export default function App() {
 
       {/* Print Modal */}
       {showPrintModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 print:hidden">
+        <div className="fixed inset-0 flex items-center justify-center z-50 p-4 print:hidden" style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}>
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
             <h3 className="text-xl font-bold text-gray-900 mb-2">Printing Unavailable Here</h3>
             <p className="text-gray-600 mb-6">
