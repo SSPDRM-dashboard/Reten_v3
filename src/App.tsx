@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Printer, FileSpreadsheet, CalendarDays, CalendarRange, Users, Database, RefreshCw, AlertCircle, CheckCircle2, Download, User } from 'lucide-react';
+import { Printer, FileSpreadsheet, CalendarDays, CalendarRange, Users, Database, RefreshCw, AlertCircle, CheckCircle2, Download, User, FileText } from 'lucide-react';
 import Papa from 'papaparse';
 import html2pdf from 'html2pdf.js';
 
@@ -57,7 +57,7 @@ const years = [2021, 2022, 2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030];
 // Example: "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
 const GOOGLE_SHEET_ID: string = "1mD8nfxGetTY1Xi4o4d471eCFOCDmbEJ_ZclBguqsnMI";
 
-type TabType = 'MONTHLY' | 'PERSONAL' | 'ALLOWANCE' | 'ALLOWANCE_LIVE';
+type TabType = 'MONTHLY' | 'PERSONAL' | 'ALLOWANCE' | 'ALLOWANCE_LIVE' | 'PENYALUR_MAKLUMAT';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -81,6 +81,29 @@ export default function App() {
   const [voucherDataLive, setVoucherDataLive] = useState<any[]>([]);
   const [attendanceDataLive, setAttendanceDataLive] = useState<any[]>([]);
   const [liveDataStatus, setLiveDataStatus] = useState<string>('Initializing...');
+  const [maklumatData, setMaklumatData] = useState<any[]>([]);
+  const MAKLUMAT_SHEET_ID = "140GxAx-6bU_PQipsPY97Aj1lkETvy3OmUnvbSYbHe1k";
+
+  const fetchMaklumatLive = () => {
+    Papa.parse(`https://docs.google.com/spreadsheets/d/${MAKLUMAT_SHEET_ID}/export?format=csv`, {
+      download: true,
+      header: true,
+      complete: (results) => {
+        console.log("Maklumat Data Headers:", results.meta.fields);
+        console.log("Maklumat Data First Row:", results.data[0]);
+        setMaklumatData(results.data);
+      },
+      error: (error) => {
+        console.error("Error fetching maklumat", error);
+      }
+    });
+  };
+
+  useEffect(() => {
+    if (activeTab === 'PENYALUR_MAKLUMAT') {
+      fetchMaklumatLive();
+    }
+  }, [activeTab]);
 
   const [printMode, setPrintMode] = useState<'CURRENT' | 'ALL'>('CURRENT');
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -1499,6 +1522,349 @@ export default function App() {
     );
   };
 
+  const exportToWord = () => {
+    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Export HTML to Word</title><style>body { font-family: Arial, sans-serif; } h1 { font-family: 'Times New Roman', serif; } table { border-collapse: collapse; width: 100%; } .td-main { border: 1px solid black; padding: 6px 12px; font-size: 13px; } .td-opt { border: none; padding: 2px 4px; font-size: 13px; } .font-bold { font-weight: bold; } .text-center { text-align: center; } .uppercase { text-transform: uppercase; } .bg-gray { background-color: #f3f4f6; } </style></head><body>";
+    const footer = "</body></html>";
+    let rawHTML = document.getElementById("maklumat-container")?.innerHTML || "";
+    
+    // Replace the marker with MS Word specific page break
+    rawHTML = rawHTML.replace(/<div class="page-break-mark".*?<\/div>/g, '<br clear="all" style="mso-special-character:line-break;page-break-before:always" />');
+    
+    const sourceHTML = header + rawHTML + footer;
+    
+    const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
+    const fileDownload = document.createElement("a");
+    document.body.appendChild(fileDownload);
+    fileDownload.href = source;
+    fileDownload.download = `Borang_Maklumat_${selectedMonth}_${selectedYear}.doc`;
+    fileDownload.click();
+    document.body.removeChild(fileDownload);
+  };
+
+  const renderPenyalurMaklumat = () => {
+    // Filter data based on selected month and year
+    const filteredData = maklumatData.filter(row => {
+      const tarikh = String(row['TARIKH MAKLUMAT'] || '').trim();
+      if (!tarikh) return false;
+      const parts = tarikh.split('/');
+      if (parts.length < 3) return false;
+      const m = parseInt(parts[1], 10) - 1;
+      const y = parseInt(parts[2], 10);
+      return m === months.indexOf(selectedMonth) && y === selectedYear;
+    });
+
+    if (filteredData.length === 0) {
+      return (
+        <div className="w-full max-w-4xl mx-auto bg-white p-8 text-center print:hidden">
+          <p className="text-gray-500">Tiada data untuk bulan dan tahun yang dipilih.</p>
+        </div>
+      );
+    }
+
+    const sumPegawai = { total: 0, jenayah: 0, narkotik: 0, trafic: 0, komersil: 0, lain: 0 };
+    const sumAnggota = { total: 0, jenayah: 0, narkotik: 0, trafic: 0, komersil: 0, lain: 0 };
+    const sumTotal = { total: 0, jenayah: 0, narkotik: 0, trafic: 0, komersil: 0, lain: 0 };
+
+    filteredData.forEach(row => {
+      const pejawatan = String(row['PEJAWATAN ANDA'] || '').trim().toUpperCase();
+      const isPegawai = pejawatan === 'PEG';
+      const jenisRaw = String(row['JENIS MAKLUMAT'] || '').trim().toUpperCase();
+      
+      const checkType = (type: string) => {
+        if (type === 'JENAYAH' && jenisRaw.includes('JENAYAH')) return 1;
+        if (type === 'NARKOTIK' && (jenisRaw.includes('DADAH') || jenisRaw.includes('NARKOTIK'))) return 1;
+        if (type === 'TRAFIC' && (jenisRaw.includes('TRAFIK') || jenisRaw.includes('TRAFIC'))) return 1;
+        if (type === 'KOMERSIL' && jenisRaw.includes('KOMERSIL')) return 1;
+        if (type === 'LAIN-LAIN' && jenisRaw.includes('LAIN-LAIN')) return 1;
+        return 0;
+      };
+
+      const j = checkType('JENAYAH');
+      const n = checkType('NARKOTIK');
+      const t = checkType('TRAFIC');
+      const k = checkType('KOMERSIL');
+      const l = checkType('LAIN-LAIN');
+
+      if (isPegawai) {
+        sumPegawai.total += 1;
+        sumPegawai.jenayah += j;
+        sumPegawai.narkotik += n;
+        sumPegawai.trafic += t;
+        sumPegawai.komersil += k;
+        sumPegawai.lain += l;
+      } else {
+        sumAnggota.total += 1;
+        sumAnggota.jenayah += j;
+        sumAnggota.narkotik += n;
+        sumAnggota.trafic += t;
+        sumAnggota.komersil += k;
+        sumAnggota.lain += l;
+      }
+      
+      sumTotal.total += 1;
+      sumTotal.jenayah += j;
+      sumTotal.narkotik += n;
+      sumTotal.trafic += t;
+      sumTotal.komersil += k;
+      sumTotal.lain += l;
+    });
+
+    const formatS = (val: number) => val === 0 ? 'TIADA' : String(val);
+
+    const namesByDaerah: Record<string, Set<string>> = {};
+    filteredData.forEach(row => {
+      let daerahRaw = String(row['DAERAH ANDA'] || '').trim().toUpperCase();
+      let daerah = daerahRaw.replace('SSPDRM', '').trim();
+      if (daerah === '') daerah = 'LAIN-LAIN';
+      
+      if (!namesByDaerah[daerah]) {
+        namesByDaerah[daerah] = new Set();
+      }
+      const rawName = String(row['NAMA'] || '').trim();
+      
+      if (rawName) {
+        namesByDaerah[daerah].add(rawName);
+      }
+    });
+
+    const sortedDaerahs = Object.keys(namesByDaerah).sort();
+
+    return (
+      <div id="maklumat-container">
+        <style>{`
+          .td-main { border: 1px solid black; padding: 6px 12px; }
+          .td-opt { border: none; padding: 2px 4px; }
+          .bg-gray { background-color: #f3f4f6 !important; }
+          .page-break-after { page-break-after: always; break-after: page; } 
+          @media print { 
+            .page-break-after { page-break-after: always !important; break-after: page !important; } 
+          }
+        `}</style>
+        {filteredData.map((row, index) => {
+          const rawName = String(row[' NOMBOR BADAN DAN NAMA'] || row['NOMBOR BADAN DAN NAMA'] || '').trim();
+          const noBadanMatch = rawName.match(/\d+/);
+          const noBadan = noBadanMatch ? noBadanMatch[0] : '';
+          const namaPenyalur = rawName.replace(noBadan, '').trim();
+          const pangkat = String(row['PANGKAT'] || '').trim();
+          const tarikhMasa = `${String(row['TARIKH MAKLUMAT'] || '')} / ${String(row['MASA MAKLUMAT'] || '')}`;
+          const noSd = String(row['NO SD'] || '-').trim();
+
+          const namaPemberi = String(row['NAMA'] || '').trim();
+          const lokasi = String(row['LOKASI TERIMA MAKLUMAT'] || '').trim();
+          const kategori = String(row['KATEGORI MAKLUMAT'] || '').toUpperCase().trim();
+          const jenis = String(row['JENIS MAKLUMAT'] || '').toUpperCase().trim();
+          const butiran = String(row['BUTIR-BUTIR MAKLUMAT'] || '').trim();
+
+          const lastDayOfMonth = new Date(selectedYear, months.indexOf(selectedMonth) + 1, 0).getDate();
+          const strLastDay = `${lastDayOfMonth}/${months.indexOf(selectedMonth) + 1}/${selectedYear}`;
+
+          return (
+            <div key={index}>
+              <div className="w-full max-w-4xl mx-auto bg-white p-8 split-page page-break-after doc-page-break" style={{ marginBottom: '2rem' }}>
+                <h1 className="text-center font-bold font-serif" style={{ fontSize: '16px', textAlign: 'center', marginTop: '-4px', marginBottom: '16px' }}>BORANG MAKLUMAT</h1>
+                
+                <table className="w-full border-collapse border border-black text-sm text-left">
+                  <tbody>
+                    {/* BUTIR-BUTIR PENYALUR MAKLUMAT */}
+                  <tr className="bg-gray">
+                    <td colSpan={2} className="td-main font-bold uppercase">BUTIR-BUTIR PENYALUR MAKLUMAT</td>
+                  </tr>
+                  <tr>
+                    <td className="td-main uppercase bg-white w-[35%]" style={{ width: '35%' }}>NAMA</td>
+                    <td className="td-main font-bold uppercase bg-white text-center" style={{ textAlign: 'center' }}>{namaPenyalur}</td>
+                  </tr>
+                  <tr>
+                    <td className="td-main uppercase bg-white">NO.BADAN</td>
+                    <td className="td-main font-bold uppercase bg-white text-center" style={{ textAlign: 'center' }}>{noBadan}</td>
+                  </tr>
+                  <tr>
+                    <td className="td-main uppercase bg-white">PANGKAT</td>
+                    <td className="td-main font-bold uppercase bg-white text-center" style={{ textAlign: 'center' }}>{pangkat}</td>
+                  </tr>
+                  <tr>
+                    <td className="td-main uppercase bg-white">TARIKH/MASA</td>
+                    <td className="td-main font-bold uppercase bg-white text-center" style={{ textAlign: 'center' }}>{tarikhMasa}</td>
+                  </tr>
+                  <tr>
+                    <td className="td-main uppercase bg-white">NO.SD</td>
+                    <td className="td-main font-bold uppercase bg-white text-center" style={{ textAlign: 'center' }}>{noSd}</td>
+                  </tr>
+
+                  {/* BUTIR-BUTIR PEMBERI MAKLUMAT */}
+                  <tr className="bg-gray">
+                    <td colSpan={2} className="td-main font-bold uppercase">BUTIR-BUTIR PEMBERI MAKLUMAT</td>
+                  </tr>
+                  <tr>
+                    <td className="td-main uppercase bg-white">NAMA</td>
+                    <td className="td-main font-bold uppercase bg-white text-center" style={{ textAlign: 'center' }}>{namaPemberi}</td>
+                  </tr>
+                  <tr>
+                    <td className="td-main uppercase bg-white">KP</td>
+                    <td className="td-main font-bold uppercase bg-white text-center" style={{ textAlign: 'center' }}>RAHSIA</td>
+                  </tr>
+                  <tr>
+                    <td className="td-main uppercase bg-white">PEKERJAAN</td>
+                    <td className="td-main font-bold uppercase bg-white text-center" style={{ textAlign: 'center' }}>ANGGOTA SSPDRM</td>
+                  </tr>
+                  <tr>
+                    <td className="td-main uppercase bg-white">NO. TEL</td>
+                    <td className="td-main font-bold uppercase bg-white text-center" style={{ textAlign: 'center' }}>RAHSIA</td>
+                  </tr>
+
+                  {/* LOKASI TERIMA MAKLUMAT */}
+                  <tr>
+                    <td className="td-main uppercase bg-white align-top">LOKASI <br />TERIMA MAKLUMAT</td>
+                    <td className="td-main font-bold uppercase bg-white text-center" style={{ textAlign: 'center' }}>{lokasi}</td>
+                  </tr>
+
+                  {/* KATEGORI MAKLUMAT */}
+                  <tr>
+                    <td className="td-main uppercase bg-white align-top">KATEGORI MAKLUMAT</td>
+                    <td className="td-main bg-white align-top">
+                      <table style={{width: '100%', border: 'none'}}>
+                        <tbody>
+                          <tr>
+                            <td className="td-opt" style={{width: '120px'}}>1) UMUM {kategori.includes('UMUM') ? <strong>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;√</strong> : ''}</td>
+                          </tr>
+                          <tr>
+                            <td className="td-opt" style={{width: '120px'}}>2) RAHSIA {kategori.includes('RAHSIA') ? <strong>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;√</strong> : ''}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+
+                  {/* JENIS MAKLUMAT */}
+                  <tr>
+                    <td className="td-main uppercase bg-white align-top">JENIS MAKLUMAT</td>
+                    <td className="td-main bg-white align-top">
+                      <table style={{width: '100%', border: 'none'}}>
+                        <tbody>
+                          <tr>
+                            <td className="td-opt" style={{width: '120px'}}>1) JENAYAH {jenis.includes('JENAYAH') ? <strong>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;√</strong> : ''}</td>
+                          </tr>
+                          <tr>
+                            <td className="td-opt" style={{width: '120px'}}>2) DADAH {jenis.includes('DADAH') || jenis.includes('NARKOTIK') ? <strong>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;√</strong> : ''}</td>
+                          </tr>
+                          <tr>
+                            <td className="td-opt" style={{width: '120px'}}>3) TRAFIK {jenis.includes('TRAFIK') || jenis.includes('TRAFIC') ? <strong>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;√</strong> : ''}</td>
+                          </tr>
+                          <tr>
+                            <td className="td-opt" style={{width: '120px'}}>4) KOMERSIL {jenis.includes('KOMERSIL') ? <strong>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;√</strong> : ''}</td>
+                          </tr>
+                          <tr>
+                            <td className="td-opt" style={{width: '120px'}}>5) LAIN-LAIN {jenis.includes('LAIN-LAIN') ? <strong>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;√</strong> : ''}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+
+                  {/* BUTIR-BUTIR MAKLUMAT */}
+                  <tr className="bg-gray">
+                    <td colSpan={2} className="td-main font-bold uppercase">BUTIR-BUTIR MAKLUMAT</td>
+                  </tr>
+                  <tr>
+                    <td colSpan={2} className="td-main bg-white align-middle text-center" style={{ minHeight: '120px', height: '120px' }}>
+                      <div style={{ textAlign: 'center', minHeight: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {butiran}
+                      </div>
+                    </td>
+                  </tr>
+
+                  {/* ULASAN & TANDATANGAN */}
+                  <tr>
+                    <td className="td-main bg-white" style={{ height: '150px', verticalAlign: 'bottom', width: '35%' }} valign="bottom">
+                      <div className="font-bold" style={{ marginBottom: '8px' }}>TANDATANGAN :</div>
+                      <div className="font-bold">TARIKH : {strLastDay}</div>
+                    </td>
+                    <td className="td-main bg-white" style={{ height: '150px', verticalAlign: 'top' }} valign="top">
+                      <div className="font-bold">ULASAN:</div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              </div>
+              <div className="page-break-mark"></div>
+            </div>
+          );
+        })}
+
+        {/* Summary Table at the last page */}
+        <div className="w-full max-w-4xl mx-auto bg-white p-8 doc-page-break split-page page-break-after mt-8" style={{ marginTop: '2rem' }}>
+          <h1 className="text-center font-bold text-xl mb-4 font-serif" style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '1.25rem', marginBottom: '1rem', fontFamily: 'serif' }}>PELAPORAN MAKLUMAT SSPDRM</h1>
+          <table className="w-full border-collapse border border-black text-center" style={{ fontSize: '14px', fontFamily: 'Arial, sans-serif', width: '100%', borderCollapse: 'collapse', textAlign: 'center' }}>
+            <tbody>
+              <tr style={{ backgroundColor: '#00A2E8', fontWeight: 'bold', fontSize: '16px' }}>
+                  <td colSpan={2} className="border border-black p-2 uppercase text-left w-1/2" style={{ border: '1px solid black', padding: '8px', textAlign: 'left' }}>KONTINJEN: MELAKA</td>
+                  <td colSpan={5} className="border border-black p-2 uppercase text-left pl-12 w-1/2" style={{ border: '1px solid black', padding: '8px', textAlign: 'left', paddingLeft: '48px' }}>BULAN &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{selectedMonth.toUpperCase()}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{selectedYear}</td>
+              </tr>
+              <tr style={{ backgroundColor: '#BDD7EE' }}>
+                  <td rowSpan={2} className="border border-black p-2 font-bold uppercase w-1/5" style={{ border: '1px solid black', padding: '8px', textAlign: 'center' }}>PERKARA</td>
+                  <td rowSpan={2} className="border border-black p-2 font-bold uppercase w-1/6" style={{ border: '1px solid black', padding: '8px', textAlign: 'center' }}>JUMLAH MAKLUMAT<br/>DITERIMA</td>
+                  <td colSpan={5} className="border border-black p-2 font-bold uppercase" style={{ border: '1px solid black', padding: '8px', textAlign: 'center' }}>KATEGORI</td>
+              </tr>
+              <tr style={{ backgroundColor: '#BDD7EE', fontSize: '12px' }} className="uppercase">
+                  <td className="border border-black p-2" style={{ border: '1px solid black', padding: '8px', textAlign: 'center' }}>JENAYAH</td>
+                  <td className="border border-black p-2" style={{ border: '1px solid black', padding: '8px', textAlign: 'center' }}>NARKOTIK</td>
+                  <td className="border border-black p-2" style={{ border: '1px solid black', padding: '8px', textAlign: 'center' }}>TRAFIC</td>
+                  <td className="border border-black p-2" style={{ border: '1px solid black', padding: '8px', textAlign: 'center' }}>KOMERSIL</td>
+                  <td className="border border-black p-2" style={{ border: '1px solid black', padding: '8px', textAlign: 'center' }}>LAIN-LAIN</td>
+              </tr>
+              <tr style={{ height: '100px' }}>
+                  <td className="border border-black p-4 font-bold text-left uppercase" style={{ border: '1px solid black', padding: '16px', textAlign: 'left' }}>JUMLAH PEGAWAI</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumPegawai.total)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumPegawai.jenayah)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumPegawai.narkotik)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumPegawai.trafic)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumPegawai.komersil)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumPegawai.lain)}</td>
+              </tr>
+              <tr style={{ height: '100px' }}>
+                  <td className="border border-black p-4 font-bold text-left uppercase" style={{ border: '1px solid black', padding: '16px', textAlign: 'left' }}>JUMLAH ANGGOTA</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumAnggota.total)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumAnggota.jenayah)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumAnggota.narkotik)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumAnggota.trafic)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumAnggota.komersil)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumAnggota.lain)}</td>
+              </tr>
+              <tr style={{ height: '100px' }}>
+                  <td className="border border-black p-4 font-bold text-left uppercase" style={{ border: '1px solid black', padding: '16px', textAlign: 'left' }}>JUMLAH KESELURUHAN</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumTotal.total)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumTotal.jenayah)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumTotal.narkotik)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumTotal.trafic)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumTotal.komersil)}</td>
+                  <td className="border border-black p-4 font-bold text-lg" style={{ border: '1px solid black', padding: '16px', textAlign: 'center', fontSize: '18px' }}>{formatS(sumTotal.lain)}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div className="page-break-mark"></div>
+        </div>
+
+        {/* Senarai Nama Penyalur by Daerah */}
+        <div className="w-full max-w-4xl mx-auto bg-white p-8 doc-page-break split-page mt-8" style={{ marginTop: '2rem' }}>
+          <h1 className="text-center font-bold font-serif uppercase" style={{ fontSize: '18px', marginBottom: '2rem', textAlign: 'center', fontFamily: 'serif', fontWeight: 'bold' }}>SENARAI NAMA ANGGOTA / PEGAWAI HADIR MEMBERI MAKLUMAT BAGI<br/>BULAN {selectedMonth.toUpperCase()} {selectedYear}</h1>
+          <div className="flex flex-col gap-6" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            {sortedDaerahs.map((daerah, idx) => (
+              <div key={idx} className="bg-white break-inside-avoid" style={{ breakInside: 'avoid', pageBreakInside: 'avoid', border: '1px solid black', padding: '24px' }}>
+                <h2 className="font-bold uppercase text-[16px]" style={{ fontWeight: 'bold', fontSize: '16px', marginBottom: '16px', fontFamily: 'Arial, sans-serif' }}>{daerah}</h2>
+                <div style={{ borderBottom: '1px solid black', marginBottom: '16px' }}></div>
+                <div className="flex flex-col gap-2" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {Array.from(namesByDaerah[daerah]).map((nama, nIdx) => (
+                    <div key={nIdx} className="text-[14px] font-medium uppercase" style={{ fontSize: '14px', fontFamily: 'Arial, sans-serif' }}>{nIdx + 1}. {nama}</div>
+                  ))}
+                  {namesByDaerah[daerah].size === 0 && <div className="text-[14px] italic text-gray-500" style={{ fontSize: '14px', fontStyle: 'italic', color: '#6b7280' }}>Tiada rekod</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderAllowanceTable = (isLive: boolean = false) => {
     const currentVoucherData = isLive ? voucherDataLive : voucherData;
     const daysInMonth = new Date(selectedYear, months.indexOf(selectedMonth) + 1, 0).getDate();
@@ -2285,6 +2651,17 @@ export default function App() {
             <Download className="w-4 h-4" />
             Paysheet(live data)
           </button>
+          <button
+            onClick={() => setActiveTab('PENYALUR_MAKLUMAT')}
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+              activeTab === 'PENYALUR_MAKLUMAT' 
+                ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-700' 
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            Penyalur Maklumat
+          </button>
         </div>
       </div>
 
@@ -2397,6 +2774,24 @@ export default function App() {
                 </div>
               )}
               {renderAllowanceTable(true)}
+            </div>
+          )}
+
+          {(printMode === 'ALL' || activeTab === 'PENYALUR_MAKLUMAT') && (
+            <div className="print-page-container mt-4 pt-4 border-t border-gray-200">
+              {activeTab === 'PENYALUR_MAKLUMAT' && (
+                <div className="mb-4 flex gap-4 print:hidden justify-end">
+                  <button onClick={exportToWord} className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm">
+                    <Download className="w-4 h-4" />
+                    Muat Turun (Word)
+                  </button>
+                  <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm">
+                    <Printer className="w-4 h-4" />
+                    Cetak Borang
+                  </button>
+                </div>
+              )}
+              {renderPenyalurMaklumat()}
             </div>
           )}
         </div>
