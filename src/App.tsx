@@ -1401,32 +1401,32 @@ export default function App() {
             <div className="w-24 flex-shrink-0"></div>
           </div>
 
-          <div className="space-y-2 mt-8">
-            {[selectedYear - 2, selectedYear - 1, selectedYear].map((year) => {
-              const yearData = person.years && person.years[year] ? person.years[year] : { months: Array(12).fill(0), total: 0 };
-              return (
-                <table key={year} className="w-full border-collapse border border-black text-center font-bold text-[17px]">
-                  <thead>
-                    <tr className="bg-[#135DD8] text-white">
-                      <th className="border border-black py-[6.5px] px-2 w-24">TAHUN</th>
-                      {monthNames.map(m => (
-                        <th key={m} className="border border-black py-[6.5px] px-2 w-16">{m}</th>
-                      ))}
-                      <th className="border border-black py-[6.5px] px-2 w-24">JUMLAH<br/>JAM</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="bg-white">
+          <div className="mt-8">
+            <table className="w-full border-collapse border border-black text-center font-bold text-[17px]">
+              <thead>
+                <tr className="bg-[#135DD8] text-white">
+                  <th className="border border-black py-[6.5px] px-2 w-24 bg-[#135DD8]" style={{ backgroundColor: '#135DD8', color: 'white' }}>TAHUN</th>
+                  {monthNames.map(m => (
+                    <th key={m} className="border border-black py-[6.5px] px-2 w-16 bg-[#135DD8]" style={{ backgroundColor: '#135DD8', color: 'white' }}>{m}</th>
+                  ))}
+                  <th className="border border-black py-[6.5px] px-2 w-24 bg-[#135DD8]" style={{ backgroundColor: '#135DD8', color: 'white' }}>JUMLAH<br/>JAM</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[selectedYear - 2, selectedYear - 1, selectedYear].map((year) => {
+                  const yearData = person.years && person.years[year] ? person.years[year] : { months: Array(12).fill(0), total: 0 };
+                  return (
+                    <tr key={year} className="bg-white">
                       <td className="border border-black py-[6.5px] px-2">{year}</td>
                       {yearData.months.map((hours: number, i: number) => (
                         <td key={i} className="border border-black py-[6.5px] px-2">{hours || 0}</td>
                       ))}
                       <td className="border border-black py-[6.5px] px-2">{yearData.total}</td>
                     </tr>
-                  </tbody>
-                </table>
-              );
-            })}
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
 
           <div className="mt-8 text-left text-[17px] font-bold flex justify-center">
