@@ -73,6 +73,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>('MONTHLY');
   const [selectedMonth, setSelectedMonth] = useState('JANUARY');
   const [selectedYear, setSelectedYear] = useState(2026);
+  const [selectedYearFrom, setSelectedYearFrom] = useState(2021);
   const [selectedDistrict, setSelectedDistrict] = useState('ALOR GAJAH');
   const [selectedPerson, setSelectedPerson] = useState('ALL');
   const [searchNoBadan, setSearchNoBadan] = useState('');
@@ -441,21 +442,24 @@ export default function App() {
   // Fetch data when year changes
   useEffect(() => {
     if (isAuthenticated && GOOGLE_SHEET_ID && GOOGLE_SHEET_ID !== "YOUR_GOOGLE_SHEET_ID_HERE") {
-      fetchSheetData(GOOGLE_SHEET_ID, selectedYear);
+      fetchSheetData(GOOGLE_SHEET_ID, selectedYearFrom, selectedYear);
     }
-  }, [isAuthenticated, selectedYear]);
+  }, [isAuthenticated, selectedYearFrom, selectedYear]);
 
-  const fetchSheetData = async (id: string, year: number) => {
+  const fetchSheetData = async (id: string, startYear: number, endYear: number) => {
     if (!id) return;
     setIsLoading(true);
     setError('');
     try {
-      const yearsToFetch = [year, year - 1, year - 2];
+      const yearFrom = Math.min(startYear, endYear);
+      const yearTo = Math.max(startYear, endYear);
+      const yearsToFetch = [];
+      for(let y=yearFrom; y<=yearTo; y++) yearsToFetch.push(y);
       const fetchPromises = yearsToFetch.map(y => 
         fetch(`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${y}`)
           .then(res => {
             if (!res.ok) {
-              if (y === year && (res.status === 401 || res.status === 403)) {
+              if (y === yearTo && (res.status === 401 || res.status === 403)) {
                 throw new Error('Access Denied. Please ensure the Google Sheet sharing setting is set to "Anyone with the link".');
               }
               if (y === year) {
@@ -517,9 +521,12 @@ export default function App() {
 
   // --- DATA PROCESSING ---
   const processedData = useMemo(() => {
+    const startY = Math.min(selectedYearFrom, selectedYear);
+    const endY = Math.max(selectedYearFrom, selectedYear);
+
     if (!GOOGLE_SHEET_ID || GOOGLE_SHEET_ID === "YOUR_GOOGLE_SHEET_ID_HERE") {
       // Fallback to mock data only if no sheet is connected
-      return { daily: mockDailyData, weekly: mockWeeklyData, rank: mockRankData, personal: [], debugLogs: [] };
+      return { daily: mockDailyData, weekly: mockWeeklyData, rank: mockRankData, personal: [], districtPersonnel: [], debugLogs: [] };
     }
 
     // Initialize empty structures
@@ -530,7 +537,7 @@ export default function App() {
     const debugLogs: any[] = [];
 
     if (!rawData || rawData.length === 0) {
-      return { daily, weekly, rank, personal: [], debugLogs };
+      return { daily, weekly, rank, personal: [], districtPersonnel: [], debugLogs };
     }
 
     const normalizeStr = (s: string) => (s || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
@@ -577,7 +584,7 @@ export default function App() {
 
     if (headerRowIndex === -1) {
       debugLogs.push({ reason: 'Could not find header row with TARIKH and DAERAH' });
-      return { daily, weekly, rank, personal: [], debugLogs };
+      return { daily, weekly, rank, personal: [], districtPersonnel: [], debugLogs };
     }
 
     const isDistrictMatch = (rowDistrict: any, targetDistrict: string) => {
@@ -646,10 +653,9 @@ export default function App() {
         }
       }
 
-      const isYearMatch = rowYear !== -1 && rowYear === selectedYear;
-      const isPast3Years = rowYear !== -1 && (rowYear === selectedYear || rowYear === selectedYear - 1 || rowYear === selectedYear - 2);
+      const isYearMatch = rowYear !== -1 && rowYear >= startY && rowYear <= endY;
       
-      if (!isPast3Years) continue;
+      if (!isYearMatch) continue;
 
       const rowIsDistrictMatch = isDistrictMatch(districtStr, selectedDistrict);
 
@@ -679,16 +685,19 @@ export default function App() {
           const balaiStr = idx > 0 && row[idx - 1] ? String(row[idx - 1]).trim().toUpperCase() : '';
           
           if (!personalMap.has(normalizedKey)) {
+            const initialYears: any = {};
+            for (let y = startY; y <= endY; y++) {
+              initialYears[y] = { months: Array(12).fill(0), total: 0, balai: '' };
+            }
+            if (initialYears[rowYear]) {
+              initialYears[rowYear].balai = balaiStr;
+            }
             personalMap.set(normalizedKey, {
               name: cleanNameLong,
               rank: currentRank,
               noBadan: finalNoBadan,
               balai: balaiStr,
-              years: {
-                [selectedYear]: { months: Array(12).fill(0), total: 0 },
-                [selectedYear - 1]: { months: Array(12).fill(0), total: 0 },
-                [selectedYear - 2]: { months: Array(12).fill(0), total: 0 }
-              },
+              years: initialYears,
               months: Array(12).fill(0),
               total: 0,
               latestDistrict: String(districtStr || '').trim().toUpperCase(),
@@ -719,6 +728,9 @@ export default function App() {
               pData.rank = currentRank;
               pData.noBadan = finalNoBadan;
               if (balaiStr) pData.balai = balaiStr;
+            }
+            if (balaiStr && pData.years[rowYear]) {
+              pData.years[rowYear].balai = balaiStr;
             }
           }
           
@@ -840,9 +852,9 @@ export default function App() {
         }
 
         if (selectedPerson === 'ALL') {
-          // Broaden filter: Include if they worked in this district in ANY of the past 3 years
+          // Broaden filter: Include if they worked in this district in any of the selected years
           let isMatch = false;
-          for (let y = selectedYear; y >= selectedYear - 2; y--) {
+          for (let y = startY; y <= endY; y++) {
             const districtsYear = p.districtsByYear?.[y] || new Set();
             if (Array.from(districtsYear).some(d => isDistrictMatch(d, selectedDistrict))) {
               isMatch = true;
@@ -851,9 +863,9 @@ export default function App() {
           }
           if (!isMatch) return false;
         } else {
-          // For single person selection, also check any year in the 3-year window
+          // For single person selection, also check any year in the window
           let isMatch = false;
-          for (let y = selectedYear; y >= selectedYear - 2; y--) {
+          for (let y = startY; y <= endY; y++) {
             const districtsYear = p.districtsByYear?.[y] || new Set();
             if (Array.from(districtsYear).some(d => isDistrictMatch(d, selectedDistrict))) {
               isMatch = true;
@@ -882,17 +894,49 @@ export default function App() {
         
         return a.name.localeCompare(b.name);
       });
-    return { daily, weekly, rank, personal, debugLogs };
-  }, [rawData, csvFields, selectedMonth, selectedYear, selectedDistrict, searchNoBadan]);
+
+    const districtPersonnel = Array.from(personalMap.values())
+      .filter(p => {
+        // Only checking district for districtPersonnel
+        let isMatch = false;
+        for (let y = startY; y <= endY; y++) {
+          const districtsYear = p.districtsByYear?.[y] || new Set();
+          if (Array.from(districtsYear).some(d => isDistrictMatch(d, selectedDistrict))) {
+            isMatch = true;
+            break;
+          }
+        }
+        return isMatch;
+      })
+      .sort((a, b) => {
+        const priorityA = getRankPriority(a.rank);
+        const priorityB = getRankPriority(b.rank);
+        
+        if (priorityA !== priorityB) {
+          return priorityA - priorityB;
+        }
+        
+        const noBadanA = extractNoBadan(a.name, a.rank);
+        const noBadanB = extractNoBadan(b.name, b.rank);
+        
+        if (noBadanA !== noBadanB) {
+          return noBadanA - noBadanB;
+        }
+        
+        return a.name.localeCompare(b.name);
+      });
+
+    return { daily, weekly, rank, personal, districtPersonnel, debugLogs };
+  }, [rawData, csvFields, selectedMonth, selectedYear, selectedYearFrom, selectedDistrict, searchNoBadan, selectedPerson, loggedInName, userRole]);
 
   useEffect(() => {
-    if (selectedPerson !== 'ALL' && processedData.personal.length > 0) {
-      const exists = processedData.personal.some(p => p.name === selectedPerson);
+    if (selectedPerson !== 'ALL' && processedData.districtPersonnel.length > 0) {
+      const exists = processedData.districtPersonnel.some(p => p.name === selectedPerson);
       if (!exists && userRole.toLowerCase() === 'admin') {
         setSelectedPerson('ALL');
       }
     }
-  }, [selectedDistrict, processedData.personal, selectedPerson, userRole]);
+  }, [selectedDistrict, processedData.districtPersonnel, selectedPerson, userRole]);
 
   // --- CALCULATIONS ---
   const dailyWithTotals = useMemo(() => {
@@ -1366,12 +1410,23 @@ export default function App() {
 
     const monthTotals = Array(12).fill(0);
     let grandTotal = 0;
+    
+    const startY = Math.min(selectedYearFrom, selectedYear);
+    const endY = Math.max(selectedYearFrom, selectedYear);
+
+    const yearsToRender: number[] = [];
+    for (let y = startY; y <= endY; y++) {
+      yearsToRender.push(y);
+    }
+
     displayedPersonnel.forEach(p => {
-      // In "ALL" view, we only sum the selected year
-      const yearData = p.years && p.years[selectedYear] ? p.years[selectedYear] : { months: Array(12).fill(0), total: 0 };
-      yearData.months.forEach((m: number, i: number) => {
-        monthTotals[i] += (m || 0);
-        grandTotal += (m || 0);
+      // In "ALL" view, we sum over the selected year range
+      yearsToRender.forEach(year => {
+        const yearData = p.years && p.years[year] ? p.years[year] : { months: Array(12).fill(0), total: 0 };
+        yearData.months.forEach((m: number, i: number) => {
+          monthTotals[i] += (m || 0);
+          grandTotal += (m || 0);
+        });
       });
     });
 
@@ -1416,7 +1471,7 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {[selectedYear - 2, selectedYear - 1, selectedYear].map((year) => {
+                {yearsToRender.map((year) => {
                   const yearData = person.years && person.years[year] ? person.years[year] : { months: Array(12).fill(0), total: 0 };
                   return (
                     <tr key={year} className="bg-white">
@@ -1448,7 +1503,7 @@ export default function App() {
       <div className="w-full">
         {displayedPersonnel.length === 0 && (userRole.toLowerCase() !== 'admin' || selectedPerson !== 'ALL') && (
           <div className="p-8 text-center text-gray-500 bg-gray-50 rounded-lg border border-dashed border-gray-300 mb-6">
-            Tiada data tugasan dijumpai untuk {userRole.toLowerCase() !== 'admin' ? 'anda' : 'anggota ini'} pada tahun {selectedYear} di daerah {selectedDistrict}.
+            Tiada data tugasan dijumpai untuk {userRole.toLowerCase() !== 'admin' ? 'anda' : 'anggota ini'} dari {selectedYearFrom} hingga {selectedYear} di daerah {selectedDistrict}.
           </div>
         )}
         
@@ -1478,35 +1533,32 @@ export default function App() {
                 pangkat = ''; 
               }
 
-              const yearData = person.years && person.years[selectedYear] ? person.years[selectedYear] : { months: Array(12).fill(0), total: 0 };
-
-              return (
-                <tr key={idx} className="even:bg-gray-50 print:even:bg-transparent break-inside-avoid">
-                  <td className="border border-black p-1">{idx + 1}</td>
-                  <td className="border border-black p-1">{person.noBadan}</td>
-                  <td className="border border-black p-1">{pangkat}</td>
-                  <td className="border border-black p-1 text-left pl-2">{person.name}</td>
-                  <td className="border border-black p-1">{person.balai || ''}</td>
-                  <td className="border border-black p-1">{selectedYear}</td>
-                  {yearData.months.map((hours: number, i: number) => (
-                    <td key={i} className="border border-black p-1">{hours || 0}</td>
-                  ))}
-                  <td className="border border-black p-1 font-bold bg-gray-50 print:bg-transparent">{yearData.total}</td>
-                </tr>
-              );
+              return yearsToRender.map((y, yIdx) => {
+                const yearData = person.years && person.years[y] ? person.years[y] : { months: Array(12).fill(0), total: 0 };
+                
+                return (
+                  <tr key={`${idx}-${y}`} className="even:bg-gray-50 print:even:bg-transparent break-inside-avoid">
+                    {yIdx === 0 && (
+                      <>
+                        <td className="border border-black p-1" rowSpan={yearsToRender.length}>{idx + 1}</td>
+                        <td className="border border-black p-1" rowSpan={yearsToRender.length}>{person.noBadan}</td>
+                        <td className="border border-black p-1" rowSpan={yearsToRender.length}>{pangkat}</td>
+                        <td className="border border-black p-1 text-left pl-2" rowSpan={yearsToRender.length}>{person.name}</td>
+                      </>
+                    )}
+                    <td className="border border-black p-1">{yearData.balai || person.balai || ''}</td>
+                    <td className="border border-black p-1">{y}</td>
+                    {yearData.months.map((hours: number, i: number) => (
+                      <td key={i} className="border border-black p-1">{hours || 0}</td>
+                    ))}
+                    <td className="border border-black p-1 font-bold bg-gray-50 print:bg-transparent">{yearData.total}</td>
+                  </tr>
+                );
+              });
             })}
             {displayedPersonnel.length === 0 && (
               <tr>
-                <td colSpan={19} className="border border-black p-4 text-gray-500">Tiada rekod anggota dijumpai untuk tahun {selectedYear}</td>
-              </tr>
-            )}
-            {displayedPersonnel.length > 0 && selectedPerson === 'ALL' && (
-              <tr className="bg-gray-50 print:bg-transparent font-bold">
-                <td className="border border-black p-2 text-right pr-4" colSpan={6}>JUMLAH KESELURUHAN</td>
-                {monthTotals.map((total, i) => (
-                  <td key={i} className="border border-black p-1 text-blue-600 print:text-black">{total || 0}</td>
-                ))}
-                <td className="border border-black p-1 text-blue-600 print:text-black">{grandTotal}</td>
+                <td colSpan={19} className="border border-black p-4 text-gray-500">Tiada rekod anggota dijumpai untuk tempoh ini</td>
               </tr>
             )}
           </tbody>
@@ -1670,7 +1722,7 @@ export default function App() {
                   <tbody>
                     {/* BUTIR-BUTIR PENYALUR MAKLUMAT */}
                   <tr className="bg-gray">
-                    <td colSpan={2} className="td-main font-bold uppercase">BUTIR-BUTIR PENYALUR MAKLUMAT</td>
+                    <td colSpan={2} className="td-main font-bold uppercase text-center" style={{ textAlign: 'center' }}>BUTIR-BUTIR PENYALUR MAKLUMAT</td>
                   </tr>
                   <tr>
                     <td className="td-main uppercase bg-white w-[35%]" style={{ width: '35%' }}>NAMA</td>
@@ -1695,7 +1747,7 @@ export default function App() {
 
                   {/* BUTIR-BUTIR PEMBERI MAKLUMAT */}
                   <tr className="bg-gray">
-                    <td colSpan={2} className="td-main font-bold uppercase">BUTIR-BUTIR PEMBERI MAKLUMAT</td>
+                    <td colSpan={2} className="td-main font-bold uppercase text-center" style={{ textAlign: 'center' }}>BUTIR-BUTIR PEMBERI MAKLUMAT</td>
                   </tr>
                   <tr>
                     <td className="td-main uppercase bg-white">NAMA</td>
@@ -1765,7 +1817,7 @@ export default function App() {
 
                   {/* BUTIR-BUTIR MAKLUMAT */}
                   <tr className="bg-gray">
-                    <td colSpan={2} className="td-main font-bold uppercase">BUTIR-BUTIR MAKLUMAT</td>
+                    <td colSpan={2} className="td-main font-bold uppercase text-center" style={{ textAlign: 'center' }}>BUTIR-BUTIR MAKLUMAT</td>
                   </tr>
                   <tr>
                     <td colSpan={2} className="td-main bg-white align-middle text-center" style={{ minHeight: '120px', height: '120px' }}>
@@ -1902,8 +1954,8 @@ export default function App() {
         // Use attendanceDataLive for hours and dates
         if (!attendanceDataLive || attendanceDataLive.length === 0) return { dailyHours, name, rank, totalHours: 0 };
 
-        // Find the person in processedData.personal first to get their name and rank (consistent with backup)
-        const person = processedData.personal.find(p => {
+        // Find the person in processedData.districtPersonnel first to get their name and rank (consistent with backup)
+        const person = processedData.districtPersonnel.find(p => {
           const pNoStr = String(p.noBadan).replace(/[^0-9]/g, '');
           if (!pNoStr) return false;
           const pNo = parseInt(pNoStr, 10);
@@ -1977,8 +2029,8 @@ export default function App() {
       // BACKUP DATA LOGIC (Original)
       if (!noBadan || !rawData || rawData.length === 0) return { dailyHours, name, rank, totalHours: 0 };
 
-      // Find the person in processedData.personal first to get their name
-      const person = processedData.personal.find(p => {
+      // Find the person in processedData.districtPersonnel first to get their name
+      const person = processedData.districtPersonnel.find(p => {
         const pNoStr = String(p.noBadan).replace(/[^0-9]/g, '');
         if (!pNoStr) return false;
         const pNo = parseInt(pNoStr, 10);
@@ -2104,27 +2156,25 @@ export default function App() {
     let grandTotalPenugasan = 0;
 
     return (
-      <div className="w-full">
+      <React.Fragment>
         {/* Report 1: Attendance & Allowance */}
         <div className="print-page-container relative pb-8 print:pb-0">
-          <div className="relative z-10">
-            <div className="flex justify-end items-start mb-2">
-              <div className="text-right text-[10px] font-bold">
-                SPDRM MELAKA BR.NO............<br/>
-                LAMPIRAN 'A1'<br/>
-                PDRM (H) 49<br/>
-                <span className="text-[8px]">PNMB.,K.L</span>
-              </div>
+          <div className="relative z-10 pt-4">
+            <div className="absolute top-0 right-0 text-right text-[10px] font-bold">
+              SPDRM MELAKA BR.NO............<br/>
+              LAMPIRAN 'A1'<br/>
+              PDRM (H) 49<br/>
+              <span className="text-[8px]">PNMB.,K.L</span>
             </div>
 
-            <div className="text-center mb-2 relative -mt-[30px] print:-mt-[45px]">
-              <h2 className="text-[30px] font-bold uppercase print:text-[30px]">PASUKAN SUKARELAWAN SIMPANAN POLIS</h2>
+            <div className="text-center mb-2">
+              <h2 className="text-[30px] font-bold uppercase print:text-[26px]">PASUKAN SUKARELAWAN SIMPANAN POLIS</h2>
               <div className="text-[14px] font-bold mt-1 print:text-[14px]">
                 Daftar Kedatangan dan Jadual Elaun bagi Bulan: <span className="border-b border-black px-4">{selectedMonth} {selectedYear}</span>
               </div>
               <div className="text-[14px] font-bold mt-2 flex justify-center items-center gap-8 print:mt-1 print:gap-4">
                 <span className="text-[14px] print:text-[14px]">Nama Pasukan :</span>
-                <span className="text-[24px] font-black tracking-widest print:text-[16px]">{selectedDistrict}</span>
+                <span className="text-[24px] font-black tracking-widest print:text-[14px]">{selectedDistrict}</span>
               </div>
             </div>
 
@@ -2146,8 +2196,9 @@ export default function App() {
                   {Array(31).fill(0).map((_, i) => (
                     <col key={i} style={{ width: '1.2%' }} />
                   ))}
-                  <col style={{ width: '4%' }} />
-                  <col style={{ width: '4%' }} />
+                  <col style={{ width: '2.5%' }} />
+                  <col style={{ width: '2.5%' }} />
+                  <col style={{ width: '3.5%' }} />
                   <col style={{ width: '3%' }} />
                   <col style={{ width: '3%' }} />
                   <col style={{ width: '3%' }} />
@@ -2163,7 +2214,7 @@ export default function App() {
                     <th className="border border-black py-0 px-1" rowSpan={2}>Nama</th>
                     <th className="border border-black py-0 px-1" colSpan={31}>Jumlah jam bertugas / berlatih pada tarikh berikut</th>
                     <th className="border border-black py-0 px-0.5 text-[8px] leading-tight font-bold" rowSpan={2}>Jumlah<br/>kedatangan</th>
-                    <th className="border border-black py-0 px-0.5 text-[8px] leading-tight font-bold" rowSpan={2}>Jumlah<br/>Jam<br/>bertugas/<br/>berlatih</th>
+                    <th className="border border-black py-0 px-0.5 text-[8px] leading-tight font-bold" colSpan={2} rowSpan={2}>Jumlah<br/>Jam<br/>bertugas/<br/>berlatih</th>
                     <th className="border border-black py-0 px-0.5 text-[10px] font-bold" colSpan={3}>ELAUN KENDERAAN</th>
                     <th className="border border-black py-0 px-0.5 text-[8px] leading-tight font-bold" rowSpan={2}>Belanja Elaun Latihan<br/>(Peringatan A)</th>
                     <th className="border border-black py-0 px-0.5 text-[8px] leading-tight font-bold" rowSpan={2}>Jumlah Elaun yang akan<br/>di bayar</th>
@@ -2215,6 +2266,7 @@ export default function App() {
                           ))}
                           <td className="border border-black p-1">{kedatangan || ''}</td>
                           <td className="border border-black p-1">{totalHours || ''}</td>
+                          <td className="border border-black p-1">{cappedHours || ''}</td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1">{noBadan ? rate.toFixed(2) : ''}</td>
                           <td className="border border-black p-1"></td>
@@ -2240,6 +2292,7 @@ export default function App() {
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1"></td>
+                          <td className="border border-black p-1"></td>
                         </tr>
                       );
                     } else if (idx === 13) {
@@ -2249,7 +2302,7 @@ export default function App() {
                           <td className="border border-black p-1">{idx + 1}</td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1"></td>
-                          <td className="border border-black p-1 text-left pl-4 uppercase" colSpan={37}>
+                          <td className="border border-black p-1 text-left pl-4 uppercase" colSpan={38}>
                             RINGGIT : {numberToMalayWords(grandTotalElaun)}
                           </td>
                           <td className="border border-black p-1">{grandTotalElaun.toFixed(2)}</td>
@@ -2273,8 +2326,9 @@ export default function App() {
                             });
                             return <td key={i} className="border border-black p-0 text-[10px]">{dayTotal || ''}</td>;
                           })}
-                          <td className="border border-black p-1"></td>
-                          <td className="border border-black p-1">{grandTotalHoursWorked || ''}</td>
+                          <td className="border border-black p-1 text-[10px] font-bold">{grandTotalPenugasan || ''}</td>
+                          <td className="border border-black p-1 text-[10px] font-bold">{grandTotalHoursWorked || ''}</td>
+                          <td className="border border-black p-1 text-[10px] font-bold">{grandTotalCappedHours || ''}</td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1"></td>
@@ -2288,7 +2342,7 @@ export default function App() {
                 </tbody>
               </table>
               <datalist id="personnel-list">
-                {processedData.personal
+                {processedData.districtPersonnel
                   .filter(p => {
                     const num = String(p.noBadan).replace(/[^0-9]/g, '');
                     return !!num && !selectedNoBadanList.includes(num);
@@ -2325,7 +2379,7 @@ export default function App() {
 
         {/* Report 2: Voucher */}
         <div className="html2pdf__page-break"></div>
-        <div className="print-page-container page-break-before pt-[188px] print:pt-0 border-t-2 border-dashed border-gray-300 print:border-none">
+        <div className="print-page-container pt-[188px] print:pt-0 border-t-2 border-dashed border-gray-300 print:border-none">
           <div className="flex justify-between items-start mb-6">
             <div className="text-xs font-bold underline">SSPDRM MELAKA - BAUCER NO :</div>
             <div className="text-xs font-bold">SPDRM MELAKA BR.NO: ...........................</div>
@@ -2390,7 +2444,7 @@ export default function App() {
           </div>
           
         </div>
-      </div>
+      </React.Fragment>
     );
   };
 
@@ -2495,6 +2549,7 @@ export default function App() {
         .pdf-compact-mode [class*="print:text-[11px]"] { font-size: 11px !important; line-height: 11px !important; }
         .pdf-compact-mode [class*="print:text-[14px]"] { font-size: 14px !important; line-height: 14px !important; }
         .pdf-compact-mode [class*="print:text-[16px]"] { font-size: 16px !important; line-height: 16px !important; }
+        .pdf-compact-mode [class*="print:text-[26px]"] { font-size: 26px !important; line-height: 26px !important; }
         .pdf-compact-mode [class*="print:text-[30px]"] { font-size: 30px !important; line-height: 30px !important; }
         .pdf-compact-mode [class*="print:gap-4"] { gap: 1rem !important; }
         .pdf-compact-mode [class*="print:space-y-2"] > :not([hidden]) ~ :not([hidden]) {
@@ -2513,7 +2568,6 @@ export default function App() {
         .pdf-compact-mode .print-page-container {
           margin-bottom: 0 !important;
           padding: 0 !important;
-          page-break-after: always !important;
         }
         .pdf-compact-mode .print-page-container:last-child {
           page-break-after: auto !important;
@@ -2571,22 +2625,48 @@ export default function App() {
               {months.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
             
-            <select 
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(Number(e.target.value))}
-              className="px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-            >
-              {years.map(y => <option key={y} value={y}>{y}</option>)}
-            </select>
-
+            {activeTab === 'PERSONAL' ? (
+              <div className="flex items-center gap-1">
+                <span className="text-sm font-medium text-gray-700">Tahun Dari:</span>
+                <select 
+                  value={selectedYearFrom}
+                  onChange={(e) => setSelectedYearFrom(Number(e.target.value))}
+                  className="px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                >
+                  {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <span className="text-sm font-medium text-gray-700 ml-1">Hingga:</span>
+                <select 
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(Number(e.target.value))}
+                  className="px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                >
+                  {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+            ) : (
+              <select 
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(Number(e.target.value))}
+                className="px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+              >
+                {years.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            )}
+            
             {activeTab === 'PERSONAL' && (
               <>
                 <input
                   type="text"
-                  placeholder="Carian No Badan..."
+                  placeholder="Carian No Badan / Nama..."
                   value={searchNoBadan}
-                  onChange={(e) => setSearchNoBadan(e.target.value)}
-                  className="px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-36"
+                  onChange={(e) => {
+                    setSearchNoBadan(e.target.value);
+                    if (e.target.value !== '' && selectedPerson !== 'ALL') {
+                      setSelectedPerson('ALL');
+                    }
+                  }}
+                  className="px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none w-48"
                 />
                 <select 
                   value={selectedPerson}
@@ -2594,8 +2674,8 @@ export default function App() {
                   className="px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none max-w-[200px] truncate"
                 >
                   <option value="ALL">SEMUA ANGGOTA</option>
-                  {processedData.personal.map(p => (
-                    <option key={p.name} value={p.name}>{p.name} ({p.latestDistrict})</option>
+                  {processedData.districtPersonnel.map(p => (
+                    <option key={`${p.noBadan}-${p.name}`} value={p.name}>{p.name} ({p.latestDistrict})</option>
                   ))}
                 </select>
               </>
@@ -2811,7 +2891,7 @@ export default function App() {
                 </div>
                 <div className="text-xl sm:text-2xl font-bold mt-4 uppercase">
                   JUMLAH JAM PENUGSAN BULANAN BAGI TAHUN <span className="ml-2 border-b border-black pb-1 px-4">
-                    {selectedPerson !== 'ALL' ? `${selectedYear - 2} - ${selectedYear}` : selectedYear}
+                    {selectedYearFrom !== selectedYear ? `${Math.min(selectedYearFrom, selectedYear)} - ${Math.max(selectedYearFrom, selectedYear)}` : selectedYear}
                   </span>
                 </div>
               </div>
@@ -2825,7 +2905,7 @@ export default function App() {
             </React.Fragment>
           )}
 
-          {(printMode === 'ALL' || activeTab === 'ALLOWANCE_LIVE') && (
+          {(activeTab === 'ALLOWANCE_LIVE') && (
             <React.Fragment>
               {activeTab === 'ALLOWANCE_LIVE' && (
                 <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between print:hidden">
