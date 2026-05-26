@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Printer, FileSpreadsheet, CalendarDays, CalendarRange, Users, Database, RefreshCw, AlertCircle, CheckCircle2, Download, User, FileText } from 'lucide-react';
+import { Printer, FileSpreadsheet, CalendarDays, CalendarRange, Users, Database, RefreshCw, AlertCircle, CheckCircle2, Download, User, FileText, TrendingUp } from 'lucide-react';
 import Papa from 'papaparse';
 import html2pdf from 'html2pdf.js';
 
@@ -57,7 +57,7 @@ const years = [2021, 2022, 2023, 2024, 2025, 2026, 2027, 2028, 2029, 2030];
 // Example: "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms"
 const GOOGLE_SHEET_ID: string = "1mD8nfxGetTY1Xi4o4d471eCFOCDmbEJ_ZclBguqsnMI";
 
-type TabType = 'MONTHLY' | 'PERSONAL' | 'ALLOWANCE' | 'ALLOWANCE_LIVE' | 'PENYALUR_MAKLUMAT';
+type TabType = 'MONTHLY' | 'PERSONAL' | 'ALLOWANCE' | 'ALLOWANCE_LIVE' | 'PENYALUR_MAKLUMAT' | 'FORECAST';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -442,66 +442,128 @@ export default function App() {
   // Fetch data when year changes
   useEffect(() => {
     if (isAuthenticated && GOOGLE_SHEET_ID && GOOGLE_SHEET_ID !== "YOUR_GOOGLE_SHEET_ID_HERE") {
-      fetchSheetData(GOOGLE_SHEET_ID, selectedYearFrom, selectedYear);
+      const fromYear = activeTab === 'PERSONAL' ? selectedYearFrom : selectedYear;
+      fetchSheetData(GOOGLE_SHEET_ID, fromYear, selectedYear);
     }
-  }, [isAuthenticated, selectedYearFrom, selectedYear]);
+  }, [isAuthenticated, selectedYearFrom, selectedYear, activeTab]);
 
   const fetchSheetData = async (id: string, startYear: number, endYear: number) => {
     if (!id) return;
     setIsLoading(true);
     setError('');
     try {
-      const yearFrom = Math.min(startYear, endYear);
-      const yearTo = Math.max(startYear, endYear);
-      const yearsToFetch = [];
-      for(let y=yearFrom; y<=yearTo; y++) yearsToFetch.push(y);
-      const fetchPromises = yearsToFetch.map(y => 
-        fetch(`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${y}`)
+      // Always fetch years from 2021 up to max of selectedYear/endYear to ensure no cross-tab or historical entries are missed
+      const yearFrom = 2021;
+      const yearTo = Math.max(startYear, endYear, 2026);
+      
+      const tabsToFetch: string[] = [];
+      for (let y = yearFrom; y <= yearTo; y++) {
+        tabsToFetch.push(String(y));
+        if (y >= 2022 && y <= 2025) {
+          tabsToFetch.push("2" + y);
+        }
+      }
+
+      const fetchPromises = tabsToFetch.map(tabName => 
+        fetch(`https://docs.google.com/spreadsheets/d/${id}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(tabName)}`)
           .then(res => {
             if (!res.ok) {
-              if (y === yearTo && (res.status === 401 || res.status === 403)) {
-                throw new Error('Access Denied. Please ensure the Google Sheet sharing setting is set to "Anyone with the link".');
+              if (tabName === String(selectedYear)) {
+                if (res.status === 401 || res.status === 403) {
+                  throw new Error('Access Denied. Please ensure the Google Sheet sharing setting is set to "Anyone with the link".');
+                }
+                throw new Error(`Failed to fetch data. Ensure the sheet is public and has a tab named "${selectedYear}".`);
               }
-              if (y === year) {
-                throw new Error(`Failed to fetch data. Ensure the sheet is public and has a tab named "${year}".`);
-              }
-              return null; // Past years might not exist, which is fine
+              return null;
             }
             return res.text();
           })
           .catch(err => {
-            if (y === year) throw err;
-            console.warn(`Could not fetch data for year ${y}:`, err);
+            if (tabName === String(selectedYear)) throw err;
+            console.warn(`Could not fetch data for tab ${tabName}:`, err);
             return null;
           })
       );
 
       const results = await Promise.all(fetchPromises);
       
-      const currentYearCsv = results[0];
+      const currentYearIndex = tabsToFetch.indexOf(String(selectedYear));
+      const currentYearCsv = currentYearIndex !== -1 ? results[currentYearIndex] : null;
       if (!currentYearCsv) {
-        throw new Error(`Failed to fetch data. Ensure the sheet is public and has a tab named "${year}".`);
+        throw new Error(`Failed to fetch data. Ensure the sheet is public and has a tab named "${selectedYear}".`);
       }
 
       if (currentYearCsv.trim().toLowerCase().startsWith('<!doctype html>') || currentYearCsv.trim().toLowerCase().startsWith('<html')) {
          throw new Error('Received an HTML login page instead of data. Please ensure the Google Sheet sharing setting is set to "Anyone with the link".');
       }
 
-      let combinedData: any[] = [];
+      let masterHeaderRow: any[] | null = null;
+      const uniqueDataRowsMap = new Map<string, any[]>();
 
-      results.forEach(csvText => {
+      results.forEach((csvText) => {
         if (csvText && !csvText.trim().toLowerCase().startsWith('<!doctype html>')) {
           Papa.parse(csvText, {
             header: false,
             skipEmptyLines: true,
             complete: (parseResult) => {
               if (parseResult.data && parseResult.data.length > 0) {
-                combinedData = [...combinedData, ...parseResult.data];
+                let currentHeaderRowIndex = -1;
+                for (let i = 0; i < Math.min(5, parseResult.data.length); i++) {
+                  const r = parseResult.data[i] as any[];
+                  if (r && Array.isArray(r) && r.some((c: any) => String(c).toUpperCase().includes('TARIKH')) &&
+                      r.some((c: any) => String(c).toUpperCase().includes('DAERAH'))) {
+                    currentHeaderRowIndex = i;
+                    if (!masterHeaderRow) {
+                      masterHeaderRow = r;
+                    }
+                    break;
+                  }
+                }
+
+                const dataStartIdx = currentHeaderRowIndex !== -1 ? currentHeaderRowIndex + 1 : 0;
+
+                for (let i = dataStartIdx; i < parseResult.data.length; i++) {
+                  const row = parseResult.data[i] as any[];
+                  if (!row || !Array.isArray(row) || row.length === 0) continue;
+
+                  if (row.some((c: any) => String(c).toUpperCase().includes('TARIKH')) &&
+                      row.some((c: any) => String(c).toUpperCase().includes('DAERAH'))) {
+                    continue;
+                  }
+
+                  const timestampStr = String(row[0] || '').trim();
+                  const dateStr = String(row[15] || '').trim();
+                  const hoursStr = String(row[18] || '').trim();
+                  
+                  let nameStr = '';
+                  const nameIndices = [3, 5, 7, 9];
+                  nameIndices.forEach(idx => {
+                    if (idx < row.length && row[idx]) {
+                      nameStr += String(row[idx]).trim().toUpperCase();
+                    }
+                  });
+
+                  if (!timestampStr && !dateStr && !hoursStr && !nameStr) {
+                    continue;
+                  }
+
+                  const dedupeKey = `${timestampStr}|${dateStr}|${hoursStr}|${nameStr}`;
+                  
+                  if (!uniqueDataRowsMap.has(dedupeKey)) {
+                    uniqueDataRowsMap.set(dedupeKey, row);
+                  }
+                }
               }
             }
           });
         }
       });
+
+      const combinedData: any[] = [];
+      if (masterHeaderRow) {
+        combinedData.push(masterHeaderRow);
+      }
+      combinedData.push(...uniqueDataRowsMap.values());
 
       if (combinedData.length === 0) {
         setError('Error parsing CSV data. Check your sheet format.');
@@ -653,7 +715,7 @@ export default function App() {
         }
       }
 
-      const isYearMatch = rowYear !== -1 && rowYear >= startY && rowYear <= endY;
+      const isYearMatch = rowYear !== -1 && rowYear >= 2021 && rowYear <= 2030;
       
       if (!isYearMatch) continue;
 
@@ -686,9 +748,9 @@ export default function App() {
           
           if (!personalMap.has(normalizedKey)) {
             const initialYears: any = {};
-            for (let y = startY; y <= endY; y++) {
+            years.forEach(y => {
               initialYears[y] = { months: Array(12).fill(0), total: 0, balai: '' };
-            }
+            });
             if (initialYears[rowYear]) {
               initialYears[rowYear].balai = balaiStr;
             }
@@ -748,7 +810,7 @@ export default function App() {
         }
       });
 
-      if (!isYearMatch) continue;
+      if (rowYear !== selectedYear) continue;
 
       // Daily, Weekly, Rank - these MUST still match the district filter
       if (!rowIsDistrictMatch) {
@@ -999,6 +1061,761 @@ export default function App() {
     });
     return { ranks: totals.map(t => t === 0 ? null : t), grandTotal };
   }, [rankWithTotals]);
+
+  // --- PAYMENT BY YEAR SUMMARY CALCULATION ---
+  const paymentByYearData = useMemo(() => {
+    // Return mock data if no sheet is connected or rawData is empty
+    if (!GOOGLE_SHEET_ID || GOOGLE_SHEET_ID === "YOUR_GOOGLE_SHEET_ID_HERE" || !rawData || rawData.length === 0) {
+      return getSamplePaymentByYear();
+    }
+
+    const structure: Record<string, any> = {};
+    const districtsList = ['IPK SSPDRM', 'MELAKA TENGAH', 'ALOR GAJAH', 'JASIN'];
+    
+    districtsList.forEach(d => {
+      structure[d] = {
+        PEG: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } },
+        APR: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } }
+      };
+    });
+
+    // Find header row
+    let headerRowIndex = -1;
+    let colIndices = {
+      date: -1,
+      district: -1,
+      hours: -1,
+      rank: -1
+    };
+
+    for (let i = 0; i < Math.min(20, rawData.length); i++) {
+      const row = rawData[i];
+      if (!Array.isArray(row)) continue;
+      
+      const dateIdx = row.findIndex(c => String(c).toUpperCase().includes('TARIKH'));
+      const districtIdx = row.findIndex(c => String(c).toUpperCase().includes('DAERAH'));
+      
+      if (dateIdx !== -1 && districtIdx !== -1) {
+        headerRowIndex = i;
+        colIndices.date = dateIdx;
+        colIndices.district = districtIdx;
+        colIndices.hours = row.findIndex(c => String(c).toUpperCase().includes('JUMLAH JAM'));
+        if (colIndices.hours === -1) colIndices.hours = 11;
+        colIndices.rank = row.findIndex(c => String(c).toUpperCase().includes('PANGKAT'));
+        if (colIndices.rank === -1) colIndices.rank = 14;
+        break;
+      }
+    }
+
+    if (headerRowIndex === -1) {
+      return getSamplePaymentByYear();
+    }
+
+    const isRowDistrictMatch = (rowDistrict: any, targetDistrict: string) => {
+      if (!rowDistrict || !targetDistrict) return false;
+      const s = String(rowDistrict).trim().toUpperCase();
+      const t = targetDistrict.trim().toUpperCase();
+      if (s.includes(t) || t.includes(s)) return true;
+      if (t === 'ALOR GAJAH' && (s === 'AG' || s.includes('ALOR'))) return true;
+      if (t === 'MELAKA TENGAH' && (s === 'MT' || s.includes('TENGAH'))) return true;
+      if (t === 'JASIN' && (s === 'JS' || s.includes('JASIN'))) return true;
+      if (t === 'IPK SSPDRM' && (s === 'IPK')) return true;
+      return false;
+    };
+
+    const personMonthMap = new Map<string, any>();
+
+    // Process data rows
+    for (let i = headerRowIndex + 1; i < rawData.length; i++) {
+      const row = rawData[i];
+      if (!Array.isArray(row)) continue;
+
+      const dateStr = colIndices.date !== -1 ? row[colIndices.date] : null;
+      const districtStr = colIndices.district !== -1 ? row[colIndices.district] : null;
+      const rankStr = colIndices.rank !== -1 ? row[colIndices.rank] : null;
+
+      let rowMonth = -1, rowYear = -1, rowDay = -1;
+      
+      if (dateStr) {
+        const dateOnly = String(dateStr).split(' ')[0];
+        const parts = dateOnly.split(/[\/\-]/);
+        if (parts.length === 3) {
+          if (parts[0].length === 4) {
+            rowYear = parseInt(parts[0], 10);
+            rowMonth = parseInt(parts[1], 10) - 1;
+            rowDay = parseInt(parts[2], 10);
+          } else {
+            const p0 = parseInt(parts[0], 10);
+            const p1 = parseInt(parts[1], 10);
+            const p2 = parseInt(parts[2], 10);
+            if (p1 > 12) {
+              rowMonth = p0 - 1;
+              rowDay = p1;
+              rowYear = p2;
+            } else {
+              rowDay = p0;
+              rowMonth = p1 - 1;
+              rowYear = p2;
+            }
+            if (rowYear < 100) rowYear += 2000;
+          }
+        } else {
+          const d = new Date(dateStr);
+          if (!isNaN(d.getTime())) {
+            rowYear = d.getFullYear();
+            rowMonth = d.getMonth();
+            rowDay = d.getDate();
+          }
+        }
+      }
+
+      if (rowYear !== selectedYear) continue;
+
+      let rowDistrict = '';
+      for (const d of districtsList) {
+        if (isRowDistrictMatch(districtStr, d)) {
+          rowDistrict = d;
+          break;
+        }
+      }
+      if (!rowDistrict) continue;
+
+      let hoursStr = colIndices.hours !== -1 && colIndices.hours < row.length ? row[colIndices.hours] : null;
+      const totalHours = parseFloat(String(hoursStr)) || 0;
+      if (totalHours <= 0) continue;
+
+      const nameIndices = [3, 5, 7, 9];
+      nameIndices.forEach(idx => {
+        if (idx < row.length && row[idx] && String(row[idx]).trim() !== '') {
+          const personName = String(row[idx]).trim().toUpperCase();
+          const currentRank = String(rankStr || '').toUpperCase().trim();
+          
+          const numMatch = (personName + " " + currentRank).match(/\d+/);
+          const finalNoBadan = numMatch ? numMatch[0] : '';
+          const cleanNameLong = personName.replace(finalNoBadan, '').replace(/\s+/g, ' ').trim();
+          const cleanNameForKey = cleanNameLong.replace(/[^A-Z]/g, '');
+          const normalizedKey = `${finalNoBadan}|${cleanNameForKey}`;
+          
+          const key = `${normalizedKey}|${rowMonth}`;
+          if (!personMonthMap.has(key)) {
+            personMonthMap.set(key, {
+              name: cleanNameLong,
+              rank: currentRank,
+              noBadan: finalNoBadan,
+              district: rowDistrict,
+              month: rowMonth,
+              hours: 0
+            });
+          }
+          personMonthMap.get(key).hours += totalHours;
+        }
+      });
+    }
+
+    personMonthMap.forEach((entry) => {
+      let h = entry.hours;
+      h = Math.min(h, 48); // Cap total duty hours to 48
+      
+      const r = entry.rank.toUpperCase();
+      const isPeg = r.includes('SUPT') || r.includes('DSP') || r.includes('ASP') || r.includes('INSP');
+      const category = isPeg ? 'PEG' : 'APR';
+      const rate = isPeg ? 9.80 : 8.00;
+
+      const dist = entry.district;
+      if (!structure[dist]) return;
+
+      const paidHours = Math.min(h, 48);
+
+      if (h <= 48) {
+        structure[dist][category].bracket24_48.bil += 1;
+        structure[dist][category].bracket24_48.rm += paidHours * rate;
+      } else if (h <= 96) {
+        structure[dist][category].bracket49_96.bil += 1;
+        structure[dist][category].bracket49_96.rm += paidHours * rate;
+      } else {
+        structure[dist][category].bracket97_128.bil += 1;
+        structure[dist][category].bracket97_128.rm += paidHours * rate;
+      }
+    });
+
+    districtsList.forEach(d => {
+      const peg = structure[d].PEG;
+      const apr = structure[d].APR;
+      
+      const calcTotal = (k: 'bracket1_23' | 'bracket24_48' | 'bracket49_96' | 'bracket97_128') => {
+        return {
+          bil: peg[k].bil + apr[k].bil,
+          rm: peg[k].rm + apr[k].rm
+        };
+      };
+
+      structure[d].JUMLAH = {
+        bracket1_23: calcTotal('bracket1_23'),
+        bracket24_48: calcTotal('bracket24_48'),
+        bracket49_96: calcTotal('bracket49_96'),
+        bracket97_128: calcTotal('bracket97_128')
+      };
+
+      ['PEG', 'APR', 'JUMLAH'].forEach(role => {
+        const item = structure[d][role];
+        item.total = {
+          bil: item.bracket24_48.bil,
+          rm: item.bracket24_48.rm
+        };
+      });
+    });
+
+    const keseluruhan: Record<string, any> = {
+      PEG: { bracket1_23: { bil:0, rm:0 }, bracket24_48: { bil:0, rm:0 }, bracket49_96: { bil:0, rm:0 }, bracket97_128: { bil:0, rm:0 }, total: { bil:0, rm:0 } },
+      APR: { bracket1_23: { bil:0, rm:0 }, bracket24_48: { bil:0, rm:0 }, bracket49_96: { bil:0, rm:0 }, bracket97_128: { bil:0, rm:0 }, total: { bil:0, rm:0 } },
+      JUMLAH: { bracket1_23: { bil:0, rm:0 }, bracket24_48: { bil:0, rm:0 }, bracket49_96: { bil:0, rm:0 }, bracket97_128: { bil:0, rm:0 }, total: { bil:0, rm:0 } }
+    };
+
+    districtsList.forEach(d => {
+      ['PEG', 'APR', 'JUMLAH'].forEach(role => {
+        const from = structure[d][role];
+        if (!from) return;
+        const to = keseluruhan[role];
+
+        to.total.bil += from.total.bil;
+        to.total.rm += from.total.rm;
+      });
+    });
+
+    return {
+      districts: structure,
+      keseluruhan
+    };
+  }, [rawData, selectedYear]);
+
+  // --- MONTHLY FORECAST SUMMARY CALCULATION ---
+  const monthlyForecastData = useMemo(() => {
+    const districtsList = ['IPK SSPDRM', 'MELAKA TENGAH', 'ALOR GAJAH', 'JASIN'];
+
+    // Initialize clean structure
+    const structure: Record<string, any> = {};
+    districtsList.forEach(d => {
+      structure[d] = {
+        PEG: {
+          bracket1_23: { bil: 0, rm: 0 },
+          bracket24_48: { bil: 0, rm: 0 },
+          bracket49_96: { bil: 0, rm: 0 },
+          bracket97_128: { bil: 0, rm: 0 },
+          total: { bil: 0, rm: 0 }
+        },
+        APR: {
+          bracket1_23: { bil: 0, rm: 0 },
+          bracket24_48: { bil: 0, rm: 0 },
+          bracket49_96: { bil: 0, rm: 0 },
+          bracket97_128: { bil: 0, rm: 0 },
+          total: { bil: 0, rm: 0 }
+        },
+        JUMLAH: {
+          bracket1_23: { bil: 0, rm: 0 },
+          bracket24_48: { bil: 0, rm: 0 },
+          bracket49_96: { bil: 0, rm: 0 },
+          bracket97_128: { bil: 0, rm: 0 },
+          total: { bil: 0, rm: 0 }
+        }
+      };
+    });
+
+    const keseluruhan: Record<string, any> = {
+      PEG: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 0, rm: 0 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 0, rm: 0 }
+      },
+      APR: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 0, rm: 0 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 0, rm: 0 }
+      },
+      JUMLAH: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 0, rm: 0 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 0, rm: 0 }
+      }
+    };
+
+    // If no sheet connected or rawData is empty, return a simulated state or mock data
+    if (!GOOGLE_SHEET_ID || GOOGLE_SHEET_ID === "YOUR_GOOGLE_SHEET_ID_HERE" || !rawData || rawData.length === 0) {
+      return getSamplePaymentByYear();
+    }
+
+    // Process real data!
+    // 1. Find Header
+    let headerRowIndex = -1;
+    let colIndices = {
+      date: -1,
+      district: -1,
+      hours: -1,
+      rank: -1
+    };
+
+    for (let i = 0; i < Math.min(20, rawData.length); i++) {
+      const row = rawData[i];
+      if (!Array.isArray(row)) continue;
+      
+      const dateIdx = row.findIndex(c => String(c).toUpperCase().includes('TARIKH'));
+      const districtIdx = row.findIndex(c => String(c).toUpperCase().includes('DAERAH'));
+      
+      if (dateIdx !== -1 && districtIdx !== -1) {
+        headerRowIndex = i;
+        colIndices.date = dateIdx;
+        colIndices.district = districtIdx;
+        colIndices.hours = row.findIndex(c => String(c).toUpperCase().includes('JUMLAH JAM'));
+        if (colIndices.hours === -1) colIndices.hours = 11;
+        colIndices.rank = row.findIndex(c => String(c).toUpperCase().includes('PANGKAT'));
+        if (colIndices.rank === -1) colIndices.rank = 14;
+        break;
+      }
+    }
+
+    if (headerRowIndex === -1) {
+      return getSamplePaymentByYear();
+    }
+
+    const isRowDistrictMatch = (rowDistrict: any, targetDistrict: string) => {
+      if (!rowDistrict || !targetDistrict) return false;
+      const s = String(rowDistrict).trim().toUpperCase();
+      const t = targetDistrict.trim().toUpperCase();
+      if (s.includes(t) || t.includes(s)) return true;
+      if (t === 'ALOR GAJAH' && (s === 'AG' || s.includes('ALOR'))) return true;
+      if (t === 'MELAKA TENGAH' && (s === 'MT' || s.includes('TENGAH'))) return true;
+      if (t === 'JASIN' && (s === 'JS' || s.includes('JASIN'))) return true;
+      if (t === 'IPK SSPDRM' && (s === 'IPK')) return true;
+      return false;
+    };
+
+    const personMonthMap = new Map<string, any>();
+
+    // Process data rows
+    for (let i = headerRowIndex + 1; i < rawData.length; i++) {
+      const row = rawData[i];
+      if (!Array.isArray(row)) continue;
+
+      const dateStr = colIndices.date !== -1 ? row[colIndices.date] : null;
+      const districtStr = colIndices.district !== -1 ? row[colIndices.district] : null;
+      const rankStr = colIndices.rank !== -1 ? row[colIndices.rank] : null;
+
+      let rowMonth = -1, rowYear = -1;
+      
+      if (dateStr) {
+        const dateOnly = String(dateStr).split(' ')[0];
+        const parts = dateOnly.split(/[\/\-]/);
+        if (parts.length === 3) {
+          if (parts[0].length === 4) {
+            rowYear = parseInt(parts[0], 10);
+            rowMonth = parseInt(parts[1], 10) - 1;
+          } else {
+            const p0 = parseInt(parts[0], 10);
+            const p1 = parseInt(parts[1], 10);
+            const p2 = parseInt(parts[2], 10);
+            if (p1 > 12) {
+              rowMonth = p0 - 1;
+              rowYear = p2;
+            } else {
+              rowMonth = p1 - 1;
+              rowYear = p2;
+            }
+            if (rowYear < 100) rowYear += 2000;
+          }
+        } else {
+          const d = new Date(dateStr);
+          if (!isNaN(d.getTime())) {
+            rowYear = d.getFullYear();
+            rowMonth = d.getMonth();
+          }
+        }
+      }
+
+      // Check both Month and Year!
+      if (rowYear !== selectedYear) continue;
+      const currentMonthIndex = months.indexOf(selectedMonth);
+      if (rowMonth !== currentMonthIndex) continue;
+
+      let rowDistrict = '';
+      for (const d of districtsList) {
+        if (isRowDistrictMatch(districtStr, d)) {
+          rowDistrict = d;
+          break;
+        }
+      }
+      if (!rowDistrict) continue;
+
+      let hoursStr = colIndices.hours !== -1 && colIndices.hours < row.length ? row[colIndices.hours] : null;
+      const totalHours = parseFloat(String(hoursStr)) || 0;
+      if (totalHours <= 0) continue;
+
+      const nameIndices = [3, 5, 7, 9];
+      nameIndices.forEach(idx => {
+        if (idx < row.length && row[idx] && String(row[idx]).trim() !== '') {
+          const personName = String(row[idx]).trim().toUpperCase();
+          const currentRank = String(rankStr || '').toUpperCase().trim();
+          
+          const numMatch = (personName + " " + currentRank).match(/\d+/);
+          const finalNoBadan = numMatch ? numMatch[0] : '';
+          const cleanNameLong = personName.replace(finalNoBadan, '').replace(/\s+/g, ' ').trim();
+          const cleanNameForKey = cleanNameLong.replace(/[^A-Z]/g, '');
+          const normalizedKey = `${finalNoBadan}|${cleanNameForKey}`;
+          
+          const key = `${normalizedKey}`;
+          if (!personMonthMap.has(key)) {
+            personMonthMap.set(key, {
+              name: cleanNameLong,
+              rank: currentRank,
+              noBadan: finalNoBadan,
+              district: rowDistrict,
+              hours: 0
+            });
+          }
+          personMonthMap.get(key).hours += totalHours;
+        }
+      });
+    }
+
+    personMonthMap.forEach((entry) => {
+      let h = entry.hours;
+      h = Math.min(h, 48); // Cap total duty hours to 48 so calculation correctly falls into the 24-48 bracket
+
+      const r = entry.rank.toUpperCase();
+      const isPeg = r.includes('SUPT') || r.includes('DSP') || r.includes('ASP') || r.includes('INSP');
+      const category = isPeg ? 'PEG' : 'APR';
+      const rate = isPeg ? 9.80 : 8.00;
+
+      const dist = entry.district;
+      if (!structure[dist]) return;
+
+      const paidHours = Math.min(h, 48); // Keeping Math.min here is redundant but safe
+
+      if (h <= 48) {
+        structure[dist][category].bracket24_48.bil += 1;
+        structure[dist][category].bracket24_48.rm += paidHours * rate;
+      } else if (h <= 96) {
+        structure[dist][category].bracket49_96.bil += 1;
+        structure[dist][category].bracket49_96.rm += paidHours * rate;
+      } else {
+        structure[dist][category].bracket97_128.bil += 1;
+        structure[dist][category].bracket97_128.rm += paidHours * rate;
+      }
+    });
+
+    // Populate total and JUMLAH row for each district
+    districtsList.forEach(d => {
+      ['PEG', 'APR'].forEach(role => {
+        const item = structure[d][role];
+        
+        // Keseluruhan is A + B + C
+        item.total = {
+          bil: item.bracket24_48.bil + item.bracket49_96.bil + item.bracket97_128.bil,
+          rm: item.bracket24_48.rm + item.bracket49_96.rm + item.bracket97_128.rm
+        };
+      });
+
+      // Calculate JUMLAH = PEG + APR
+      const peg = structure[d].PEG;
+      const apr = structure[d].APR;
+      
+      const calcTotal = (k: 'bracket1_23' | 'bracket24_48' | 'bracket49_96' | 'bracket97_128' | 'total') => {
+        return {
+          bil: peg[k].bil + apr[k].bil,
+          rm: peg[k].rm + apr[k].rm
+        };
+      };
+
+      structure[d].JUMLAH = {
+        bracket1_23: calcTotal('bracket1_23'),
+        bracket24_48: calcTotal('bracket24_48'),
+        bracket49_96: calcTotal('bracket49_96'),
+        bracket97_128: calcTotal('bracket97_128'),
+        total: calcTotal('total')
+      };
+    });
+
+    // Calculate Keseluruhan across all districts
+    districtsList.forEach(d => {
+      ['PEG', 'APR', 'JUMLAH'].forEach(role => {
+        const from = structure[d][role];
+        const to = keseluruhan[role];
+
+        to.bracket1_23.bil += from.bracket1_23.bil;
+        to.bracket1_23.rm += from.bracket1_23.rm;
+
+        to.bracket24_48.bil += from.bracket24_48.bil;
+        to.bracket24_48.rm += from.bracket24_48.rm;
+
+        to.bracket49_96.bil += from.bracket49_96.bil;
+        to.bracket49_96.rm += from.bracket49_96.rm;
+
+        to.bracket97_128.bil += from.bracket97_128.bil;
+        to.bracket97_128.rm += from.bracket97_128.rm;
+
+        to.total.bil += from.total.bil;
+        to.total.rm += from.total.rm;
+      });
+    });
+
+    return {
+      districts: structure,
+      keseluruhan
+    };
+  }, [rawData, selectedMonth, selectedYear]);
+
+  // --- YEARLY FORECAST SUMMARY CALCULATION ---
+  const yearlyForecastData = useMemo(() => {
+    const districtsList = ['IPK SSPDRM', 'MELAKA TENGAH', 'ALOR GAJAH', 'JASIN'];
+
+    // Initialize clean structure
+    const structure: Record<string, any> = {};
+    districtsList.forEach(d => {
+      structure[d] = {
+        PEG: {
+          bracket1_23: { bil: 0, rm: 0 },
+          bracket24_48: { bil: 0, rm: 0 },
+          bracket49_96: { bil: 0, rm: 0 },
+          bracket97_128: { bil: 0, rm: 0 },
+          total: { bil: 0, rm: 0 }
+        },
+        APR: {
+          bracket1_23: { bil: 0, rm: 0 },
+          bracket24_48: { bil: 0, rm: 0 },
+          bracket49_96: { bil: 0, rm: 0 },
+          bracket97_128: { bil: 0, rm: 0 },
+          total: { bil: 0, rm: 0 }
+        },
+        JUMLAH: {
+          bracket1_23: { bil: 0, rm: 0 },
+          bracket24_48: { bil: 0, rm: 0 },
+          bracket49_96: { bil: 0, rm: 0 },
+          bracket97_128: { bil: 0, rm: 0 },
+          total: { bil: 0, rm: 0 }
+        }
+      };
+    });
+
+    const keseluruhan: Record<string, any> = {
+      PEG: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } },
+      APR: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } },
+      JUMLAH: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } }
+    };
+
+    if (!GOOGLE_SHEET_ID || GOOGLE_SHEET_ID === "YOUR_GOOGLE_SHEET_ID_HERE" || !rawData || rawData.length === 0) {
+      return getSamplePaymentByYear();
+    }
+
+    let headerRowIndex = -1;
+    let colIndices = { date: -1, district: -1, hours: -1, rank: -1 };
+
+    for (let i = 0; i < Math.min(20, rawData.length); i++) {
+      const row = rawData[i];
+      if (!Array.isArray(row)) continue;
+      
+      const dateIdx = row.findIndex(c => String(c).toUpperCase().includes('TARIKH'));
+      const districtIdx = row.findIndex(c => String(c).toUpperCase().includes('DAERAH'));
+      
+      if (dateIdx !== -1 && districtIdx !== -1) {
+        headerRowIndex = i;
+        colIndices.date = dateIdx;
+        colIndices.district = districtIdx;
+        colIndices.hours = row.findIndex(c => String(c).toUpperCase().includes('JUMLAH JAM'));
+        if (colIndices.hours === -1) colIndices.hours = 11;
+        colIndices.rank = row.findIndex(c => String(c).toUpperCase().includes('PANGKAT'));
+        if (colIndices.rank === -1) colIndices.rank = 14;
+        break;
+      }
+    }
+
+    if (headerRowIndex === -1) {
+      return getSamplePaymentByYear();
+    }
+
+    const isRowDistrictMatch = (rowDistrict: any, targetDistrict: string) => {
+      if (!rowDistrict || !targetDistrict) return false;
+      const s = String(rowDistrict).trim().toUpperCase();
+      const t = targetDistrict.trim().toUpperCase();
+      if (s.includes(t) || t.includes(s)) return true;
+      if (t === 'ALOR GAJAH' && (s === 'AG' || s.includes('ALOR'))) return true;
+      if (t === 'MELAKA TENGAH' && (s === 'MT' || s.includes('TENGAH'))) return true;
+      if (t === 'JASIN' && (s === 'JS' || s.includes('JASIN'))) return true;
+      if (t === 'IPK SSPDRM' && (s === 'IPK')) return true;
+      return false;
+    };
+
+    // key format: "nobadan|name|month"
+    const personMonthMap = new Map<string, any>();
+
+    for (let i = headerRowIndex + 1; i < rawData.length; i++) {
+      const row = rawData[i];
+      if (!Array.isArray(row)) continue;
+
+      const dateStr = colIndices.date !== -1 ? row[colIndices.date] : null;
+      const districtStr = colIndices.district !== -1 ? row[colIndices.district] : null;
+      const rankStr = colIndices.rank !== -1 ? row[colIndices.rank] : null;
+
+      let rowMonth = -1, rowYear = -1;
+      
+      if (dateStr) {
+        const dateOnly = String(dateStr).split(' ')[0];
+        const parts = dateOnly.split(/[\/\-]/);
+        if (parts.length === 3) {
+          if (parts[0].length === 4) {
+            rowYear = parseInt(parts[0], 10);
+            rowMonth = parseInt(parts[1], 10) - 1;
+          } else {
+            const p0 = parseInt(parts[0], 10);
+            const p1 = parseInt(parts[1], 10);
+            const p2 = parseInt(parts[2], 10);
+            if (p1 > 12) {
+              rowMonth = p0 - 1;
+              rowYear = p2;
+            } else {
+              rowMonth = p1 - 1;
+              rowYear = p2;
+            }
+            if (rowYear < 100) rowYear += 2000;
+          }
+        } else {
+          const d = new Date(dateStr);
+          if (!isNaN(d.getTime())) {
+            rowYear = d.getFullYear();
+            rowMonth = d.getMonth();
+          }
+        }
+      }
+
+      if (rowYear !== selectedYear) continue; // ONLY CHECK YEAR
+      if (rowMonth === -1) continue; // safety
+
+      let rowDistrict = '';
+      for (const d of districtsList) {
+        if (isRowDistrictMatch(districtStr, d)) {
+          rowDistrict = d;
+          break;
+        }
+      }
+      if (!rowDistrict) continue;
+
+      let hoursStr = colIndices.hours !== -1 && colIndices.hours < row.length ? row[colIndices.hours] : null;
+      const totalHours = parseFloat(String(hoursStr)) || 0;
+      if (totalHours <= 0) continue;
+
+      const nameIndices = [3, 5, 7, 9];
+      nameIndices.forEach(idx => {
+        if (idx < row.length && row[idx] && String(row[idx]).trim() !== '') {
+          const personName = String(row[idx]).trim().toUpperCase();
+          const currentRank = String(rankStr || '').toUpperCase().trim();
+          
+          const numMatch = (personName + " " + currentRank).match(/\d+/);
+          const finalNoBadan = numMatch ? numMatch[0] : '';
+          const cleanNameLong = personName.replace(finalNoBadan, '').replace(/\s+/g, ' ').trim();
+          const cleanNameForKey = cleanNameLong.replace(/[^A-Z]/g, '');
+          const normalizedKey = `${finalNoBadan}|${cleanNameForKey}`;
+          
+          // CRITICAL DIFFERENCE: Key includes month!
+          const key = `${normalizedKey}|${rowMonth}`;
+          if (!personMonthMap.has(key)) {
+            personMonthMap.set(key, {
+              name: cleanNameLong,
+              rank: currentRank,
+              noBadan: finalNoBadan,
+              district: rowDistrict,
+              month: rowMonth,
+              hours: 0
+            });
+          }
+          personMonthMap.get(key).hours += totalHours;
+        }
+      });
+    }
+
+    personMonthMap.forEach((entry) => {
+      let h = entry.hours;
+      h = Math.min(h, 48); // Cap total duty hours to 48 PER MONTH
+
+      const r = entry.rank.toUpperCase();
+      const isPeg = r.includes('SUPT') || r.includes('DSP') || r.includes('ASP') || r.includes('INSP');
+      const category = isPeg ? 'PEG' : 'APR';
+      const rate = isPeg ? 9.80 : 8.00;
+
+      const dist = entry.district;
+      if (!structure[dist]) return;
+
+      const paidHours = Math.min(h, 48);
+
+      if (h <= 48) {
+        structure[dist][category].bracket24_48.bil += 1;
+        structure[dist][category].bracket24_48.rm += paidHours * rate;
+      } else if (h <= 96) {
+        structure[dist][category].bracket49_96.bil += 1;
+        structure[dist][category].bracket49_96.rm += paidHours * rate;
+      } else {
+        structure[dist][category].bracket97_128.bil += 1;
+        structure[dist][category].bracket97_128.rm += paidHours * rate;
+      }
+    });
+
+    districtsList.forEach(d => {
+      ['PEG', 'APR'].forEach(role => {
+        const item = structure[d][role];
+        item.total = {
+          bil: item.bracket24_48.bil + item.bracket49_96.bil + item.bracket97_128.bil,
+          rm: item.bracket24_48.rm + item.bracket49_96.rm + item.bracket97_128.rm
+        };
+      });
+
+      const peg = structure[d].PEG;
+      const apr = structure[d].APR;
+      
+      const calcTotal = (k: 'bracket1_23' | 'bracket24_48' | 'bracket49_96' | 'bracket97_128' | 'total') => {
+        return {
+          bil: peg[k].bil + apr[k].bil,
+          rm: peg[k].rm + apr[k].rm
+        };
+      };
+
+      structure[d].JUMLAH = {
+        bracket1_23: calcTotal('bracket1_23'),
+        bracket24_48: calcTotal('bracket24_48'),
+        bracket49_96: calcTotal('bracket49_96'),
+        bracket97_128: calcTotal('bracket97_128'),
+        total: calcTotal('total')
+      };
+    });
+
+    districtsList.forEach(d => {
+      ['PEG', 'APR', 'JUMLAH'].forEach(role => {
+        const from = structure[d][role];
+        const to = keseluruhan[role];
+
+        to.bracket1_23.bil += from.bracket1_23.bil;
+        to.bracket1_23.rm += from.bracket1_23.rm;
+
+        to.bracket24_48.bil += from.bracket24_48.bil;
+        to.bracket24_48.rm += from.bracket24_48.rm;
+
+        to.bracket49_96.bil += from.bracket49_96.bil;
+        to.bracket49_96.rm += from.bracket49_96.rm;
+
+        to.bracket97_128.bil += from.bracket97_128.bil;
+        to.bracket97_128.rm += from.bracket97_128.rm;
+
+        to.total.bil += from.total.bil;
+        to.total.rm += from.total.rm;
+      });
+    });
+
+    return {
+      districts: structure,
+      keseluruhan
+    };
+  }, [rawData, selectedYear]);
 
   const handlePrint = () => {
     try {
@@ -1594,6 +2411,206 @@ export default function App() {
     fileDownload.download = `Borang_Maklumat_${selectedMonth}_${selectedYear}.doc`;
     fileDownload.click();
     document.body.removeChild(fileDownload);
+  };
+
+
+  const renderYearlyForecastTable = () => {
+    const data = yearlyForecastData;
+    const districtsList = ['IPK SSPDRM', 'MELAKA TENGAH', 'ALOR GAJAH', 'JASIN'];
+
+    const formatRM = (val: number) => {
+      if (val === 0) return '0.00';
+      return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const formatBil = (val: number) => {
+      return val === 0 ? '0' : val.toString();
+    };
+
+    return (
+      <div className="w-full max-w-7xl mx-auto bg-white p-2 sm:p-6 select-none font-sans print:p-0 print-page-container mt-8">
+        {/* Yellow Header Banners */}
+        <div className="border border-black mb-1 bg-[#ffff00] text-black text-center py-2 font-bold text-lg sm:text-xl uppercase tracking-wider">
+          KONTINJEN : MELAKA
+        </div>
+        <div className="border border-black bg-[#ffff00] text-black text-center py-2 font-bold text-sm sm:text-base uppercase tracking-wide flex justify-between px-4 sm:px-8">
+          <span className="w-1/3 text-left">TUNTUTAN ELAUN PENUGASAN SSPDRM - </span>
+          <span className="w-1/3 text-center text-xl font-black">SEPANJANG TAHUN {selectedYear}</span>
+          <span className="w-1/3"></span>
+        </div>
+
+        {/* The Main Table with exact colors from photo */}
+        <table className="w-full border-collapse border border-black text-center font-bold text-[11px] sm:text-xs mt-4">
+          <thead>
+            {/* Header Row 1 */}
+            <tr className="bg-[#ebd300] text-black text-[10px] sm:text-[11px] h-[34px]">
+              <th className="border border-black p-1 w-10 text-center" rowSpan={2}>BIL</th>
+              <th className="border border-black p-1 w-40 text-left pl-2" rowSpan={2}>FORMASI</th>
+              <th className="border border-black p-1 w-24 text-center" rowSpan={2}>PANGKAT</th>
+              <th className="border border-black p-1 bg-[#3a60a1] text-white w-20 text-center font-bold" colSpan={1}>JUMLAH JAM BERTUGAS</th>
+              <th className="border border-black p-1 bg-[#1e7c53] text-white text-center font-bold" colSpan={2}>24 - 48 (A)</th>
+              <th className="border border-black p-1 bg-[#4a154b] text-white text-center font-bold" colSpan={2}>49 - 96 (B)</th>
+              <th className="border border-black p-1 bg-[#7b113a] text-white text-center font-bold" colSpan={2}>97 - 128 (C)</th>
+              <th className="border border-black p-1 bg-[#cca300] text-black text-center font-bold" colSpan={2}>KESELURUHAN</th>
+            </tr>
+            {/* Header Row 2 */}
+            <tr className="text-black text-[10px] sm:text-[11px]">
+              <th className="border border-black p-1 bg-[#4f81bd] text-white w-20 text-center font-bold">1 - 23 JAM<br/>BIL</th>
+              <th className="border border-black p-1 bg-[#375623] text-white w-14 text-center font-bold">BIL</th>
+              <th className="border border-black p-1 bg-[#375623] text-white w-24 text-center font-bold">RM</th>
+              <th className="border border-black p-1 bg-[#4a154b] text-white w-14 text-center font-bold">BIL</th>
+              <th className="border border-black p-1 bg-[#4a154b] text-white w-24 text-center font-bold">RM</th>
+              <th className="border border-black p-1 bg-[#7b113a] text-white w-14 text-center font-bold">BIL</th>
+              <th className="border border-black p-1 bg-[#7b113a] text-white w-24 text-center font-bold">RM</th>
+              <th className="border border-black p-1 bg-[#ffc000] text-black w-14 text-center font-bold">Jumlah (A+B+C)</th>
+              <th className="border border-black p-1 bg-[#ffc000] text-black w-24 text-center font-bold">RM</th>
+            </tr>
+          </thead>
+          <tbody>
+            {districtsList.flatMap((district, dIdx) => {
+              const dData = data.districts[district] || {
+                PEG: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } },
+                APR: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } },
+                JUMLAH: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } }
+              };
+
+              const roles = ['PEG', 'APR', 'JUMLAH'];
+
+              return roles.map((role, rIdx) => {
+                const rData = dData[role] || {
+                  bracket1_23: { bil: 0, rm: 0 },
+                  bracket24_48: { bil: 0, rm: 0 },
+                  bracket49_96: { bil: 0, rm: 0 },
+                  bracket97_128: { bil: 0, rm: 0 },
+                  total: { bil: 0, rm: 0 }
+                };
+
+                const isJumlah = role === 'JUMLAH';
+                const colFG_Bg = isJumlah ? 'bg-[#ffc000] text-black' : '';
+
+                return (
+                  <tr key={`${district}-${role}`} className="bg-white">
+                    {rIdx === 0 && (
+                      <>
+                        <td className="border border-black p-1 text-center font-bold" rowSpan={3}>{dIdx + 1}</td>
+                        <td className="border border-black p-1 text-left uppercase font-bold text-xs" rowSpan={3}>
+                          {district}
+                        </td>
+                      </>
+                    )}
+
+                    {/* Role / Pangkat column */}
+                    <td className={`border border-black p-1 uppercase text-center font-bold ${colFG_Bg}`}>{role}</td>
+
+                    {/* 1-23 JAM Column */}
+                    <td className={`border border-black p-1 text-center font-bold ${colFG_Bg}`}>
+                      {formatBil(rData.bracket1_23.bil)}
+                    </td>
+
+                    {/* 24-48 (A) Columns */}
+                    <td className={`border border-black p-1 text-center font-bold ${colFG_Bg}`}>
+                      {formatBil(rData.bracket24_48.bil)}
+                    </td>
+                    <td className={`border border-black p-1 text-right pr-2 font-bold ${colFG_Bg}`}>
+                      {formatRM(rData.bracket24_48.rm)}
+                    </td>
+
+                    {/* 49-96 (B) Columns */}
+                    <td className={`border border-black p-1 text-center font-bold ${colFG_Bg}`}>
+                      {formatBil(rData.bracket49_96.bil)}
+                    </td>
+                    <td className={`border border-black p-1 text-right pr-2 font-bold ${colFG_Bg}`}>
+                      {formatRM(rData.bracket49_96.rm)}
+                    </td>
+
+                    {/* 97-128 (C) Columns */}
+                    <td className={`border border-black p-1 text-center font-bold ${colFG_Bg}`}>
+                      {formatBil(rData.bracket97_128.bil)}
+                    </td>
+                    <td className={`border border-black p-1 text-right pr-2 font-bold ${colFG_Bg}`}>
+                      {formatRM(rData.bracket97_128.rm)}
+                    </td>
+
+                    {/* KESELURUHAN (A+B+C) */}
+                    <td className="border border-black p-1 text-center font-black bg-[#ffc000] text-black">
+                      {formatBil(rData.total.bil)}
+                    </td>
+                    <td className="border border-black p-1 text-right pr-2 font-black bg-[#ffc000] text-black">
+                      {formatRM(rData.total.rm)}
+                    </td>
+                  </tr>
+                );
+              });
+            })}
+
+            {/* KESELURUHAN ROW (Bottom) */}
+            {['PEG', 'APR', 'JUMLAH'].map((role, idx) => {
+              const rData = data.keseluruhan[role] || {
+                bracket1_23: { bil: 0, rm: 0 },
+                bracket24_48: { bil: 0, rm: 0 },
+                bracket49_96: { bil: 0, rm: 0 },
+                bracket97_128: { bil: 0, rm: 0 },
+                total: { bil: 0, rm: 0 }
+              };
+
+              return (
+                <tr key={`keseluruhan-${role}`}>
+                  {idx === 0 && (
+                    <td className="border border-black p-1 text-center font-black uppercase bg-[#ebd300] text-black" colSpan={2} rowSpan={3}>
+                      KESELURUHAN IMPLIKASI KEWANGAN
+                    </td>
+                  )}
+                  {/* Role / Pangkat column */}
+                  <td className="border border-black p-1 uppercase text-center font-black bg-[#ffff00] text-black">{role}</td>
+
+                  {/* 1-23 JAM */}
+                  <td className="border border-black p-1 font-black bg-[#4f81bd] text-white text-center">
+                    {formatBil(rData.bracket1_23.bil)}
+                  </td>
+
+                  {/* 24-48 (A) */}
+                  <td className="border border-black p-1 font-black bg-[#375623] text-white text-center">
+                    {formatBil(rData.bracket24_48.bil)}
+                  </td>
+                  <td className="border border-black p-1 font-black bg-[#375623] text-white text-right pr-2">
+                    {formatRM(rData.bracket24_48.rm)}
+                  </td>
+
+                  {/* 49-96 (B) */}
+                  <td className="border border-black p-1 font-black bg-[#4a154b] text-white text-center">
+                    {formatBil(rData.bracket49_96.bil)}
+                  </td>
+                  <td className="border border-black p-1 font-black bg-[#4a154b] text-white text-right pr-2">
+                    {formatRM(rData.bracket49_96.rm)}
+                  </td>
+
+                  {/* 97-128 (C) */}
+                  <td className="border border-black p-1 font-black bg-[#7b113a] text-white text-center">
+                    {formatBil(rData.bracket97_128.bil)}
+                  </td>
+                  <td className="border border-black p-1 font-black bg-[#7b113a] text-white text-right pr-2">
+                    {formatRM(rData.bracket97_128.rm)}
+                  </td>
+
+                  {/* KESELURUHAN (A+B+C) */}
+                  <td className="border border-black p-1 font-black bg-[#ffc000] text-black text-center">
+                    {formatBil(rData.total.bil)}
+                  </td>
+                  <td className="border border-black p-1 font-black bg-[#ffc000] text-black text-right pr-2">
+                    {formatRM(rData.total.rm)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {/* Instructions Banner Footer */}
+        <div className="border border-black bg-[#ffffea] text-black text-left pl-4 py-2 mt-4 font-bold text-xs uppercase tracking-wider">
+          SILA ISIKAN BUTIRAN MENGGUNAKAN FORMAT YANG TELAH DISEDIAKAN MENGIKUT KONTINJEN
+        </div>
+      </div>
+    );
   };
 
   const renderPenyalurMaklumat = () => {
@@ -2448,6 +3465,320 @@ export default function App() {
     );
   };
 
+  const renderPaymentByYearTable = () => {
+    const data = paymentByYearData;
+    const districtsList = ['IPK SSPDRM', 'MELAKA TENGAH', 'ALOR GAJAH', 'JASIN'];
+
+    const formatRM = (val: number) => {
+      if (val === 0) return '0.00';
+      return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const formatBil = (val: number) => {
+      return val === 0 ? '0' : val.toString();
+    };
+
+    return (
+      <div className="w-full max-w-7xl mx-auto bg-white p-4 sm:p-8">
+        {/* Yellow Header Banners */}
+        <div className="border-2 border-black mb-1 bg-[#ffff00] text-black text-center py-2 font-bold text-xl uppercase tracking-wider">
+          KONTINJEN : MELAKA
+        </div>
+        <div className="border-2 border-black bg-[#ffff00] text-black text-center py-2 font-bold text-lg uppercase tracking-wide flex justify-between px-8">
+          <span className="w-1/3 text-left">TUNTUTAN ELAUN PENUGASAN SSPDRM - </span>
+          <span className="w-1/3 text-center text-2xl font-black">{selectedYear}</span>
+          <span className="w-1/3"></span>
+        </div>
+
+        {/* The Main Table */}
+        <table className="w-full border-collapse border-2 border-black text-center font-bold text-xs sm:text-sm mt-4">
+          <thead>
+            <tr className="bg-[#404040] text-white text-xs">
+              <th className="border border-black p-3 w-12 text-center">BIL</th>
+              <th className="border border-black p-3 w-48 text-left uppercase">FORMASI</th>
+              <th className="border border-black p-3 w-28 text-center">PANGKAT</th>
+              <th className="border border-black p-3 w-40 bg-[#166534] text-center">BILANGAN ANGGOTA (&gt;= 24 JAM)</th>
+              <th className="border border-black p-3 bg-[#eab308] text-black text-center">JUMLAH TUNTUTAN ELAUN (RM)<br/>(MAKSIMUM 48 JAM)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {districtsList.flatMap((district, dIdx) => {
+              const dData = data.districts[district] || {
+                PEG: { total: { bil:0, rm:0 } },
+                APR: { total: { bil:0, rm:0 } },
+                JUMLAH: { total: { bil:0, rm:0 } }
+              };
+
+              const roles = ['PEG', 'APR', 'JUMLAH'];
+
+              return roles.map((role, rIdx) => {
+                const rData = dData[role] || { total: { bil: 0, rm: 0 } };
+                const isJumlahRow = role === 'JUMLAH';
+                const rowBg = isJumlahRow ? 'bg-[#ffff99]' : 'bg-white';
+
+                return (
+                  <tr key={`${district}-${role}`} className={`${rowBg} even:bg-opacity-80 text-xs`}>
+                    {/* Render BIL & FORMASI on the first sub-row (PEG) of each district */}
+                    {rIdx === 0 && (
+                      <>
+                        <td className="border border-black p-2 text-center" rowSpan={3}>{dIdx + 1}</td>
+                        <td className="border border-black p-2 text-left uppercase font-black" rowSpan={3}>{district}</td>
+                      </>
+                    )}
+
+                    {/* Role / Pangkat column */}
+                    <td className="border border-black p-2 uppercase text-center">{role}</td>
+
+                    {/* Keseluruhan BIL & RM */}
+                    <td className="border border-black p-2 bg-[#ffffcc] text-black font-black text-center">{formatBil(rData.total.bil)}</td>
+                    <td className="border border-black p-2 bg-[#ffffcc] text-right font-black text-black">{formatRM(rData.total.rm)}</td>
+                  </tr>
+                );
+              });
+            })}
+
+            {/* JUMLAH KESELURUHAN (Bottom section) */}
+            {['PEG', 'APR', 'JUMLAH'].map((role, rIdx) => {
+              const rData = data.keseluruhan[role] || { total: { bil: 0, rm: 0 } };
+              const isJumlahRow = role === 'JUMLAH';
+              const rowBg = isJumlahRow ? 'bg-[#ffff00] text-black font-extrabold text-sm' : 'bg-[#ffff99] text-black font-bold text-xs';
+
+              return (
+                <tr key={`keseluruhan-${role}`} className={`${rowBg}`}>
+                  {rIdx === 0 && (
+                    <td className="border border-black p-2 uppercase text-center font-black" colSpan={2} rowSpan={3}>
+                      JUMLAH KESELURUHAN
+                    </td>
+                  )}
+                  {/* Role / Pangkat column */}
+                  <td className="border border-black p-2 uppercase text-center">{role}</td>
+
+                  {/* Keseluruhan BIL & RM */}
+                  <td className="border border-black p-2 bg-[#ffff00] font-black text-center">{formatBil(rData.total.bil)}</td>
+                  <td className="border border-black p-2 bg-[#ffff00] text-right font-black">{formatRM(rData.total.rm)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {/* Instructions Banner Footer */}
+        <div className="border border-black bg-[#ffffea] text-black text-left pl-4 py-2 mt-4 font-bold text-xs uppercase tracking-wider">
+          SILA ISIKAN BUTIRAN MENGGUNAKAN FORMAT YANG TELAH DISEDIAKAN MENGIKUT KONTINJEN
+        </div>
+      </div>
+    );
+  };
+
+  const renderForecastTable = () => {
+    const data = monthlyForecastData;
+    const districtsList = ['IPK SSPDRM', 'MELAKA TENGAH', 'ALOR GAJAH', 'JASIN'];
+
+    const formatRM = (val: number) => {
+      if (val === 0) return '0.00';
+      return val.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const formatBil = (val: number) => {
+      return val === 0 ? '0' : val.toString();
+    };
+
+    return (
+      <div className="w-full max-w-7xl mx-auto bg-white p-2 sm:p-6 select-none font-sans print:p-0">
+        {/* Yellow Header Banners */}
+        <div className="border border-black mb-1 bg-[#ffff00] text-black text-center py-2 font-bold text-lg sm:text-xl uppercase tracking-wider">
+          KONTINJEN : MELAKA
+        </div>
+        <div className="border border-black bg-[#ffff00] text-black text-center py-2 font-bold text-sm sm:text-base uppercase tracking-wide flex justify-between px-4 sm:px-8">
+          <span className="w-1/3 text-left">TUNTUTAN ELAUN PENUGASAN SSPDRM - </span>
+          <span className="w-1/3 text-center text-xl font-black">{selectedMonth} {selectedYear}</span>
+          <span className="w-1/3"></span>
+        </div>
+
+        {/* The Main Table with exact colors from photo */}
+        <table className="w-full border-collapse border border-black text-center font-bold text-[11px] sm:text-xs mt-4">
+          <thead>
+            {/* Header Row 1 */}
+            <tr className="bg-[#ebd300] text-black text-[10px] sm:text-[11px] h-[34px]">
+              <th className="border border-black p-1 w-10 text-center" rowSpan={2}>BIL</th>
+              <th className="border border-black p-1 w-40 text-left pl-2" rowSpan={2}>FORMASI</th>
+              <th className="border border-black p-1 w-24 text-center" rowSpan={2}>PANGKAT</th>
+              <th className="border border-black p-1 bg-[#3a60a1] text-white w-20 text-center font-bold" colSpan={1}>JUMLAH JAM BERTUGAS</th>
+              <th className="border border-black p-1 bg-[#1e7c53] text-white text-center font-bold" colSpan={2}>24 - 48 (A)</th>
+              <th className="border border-black p-1 bg-[#4a154b] text-white text-center font-bold" colSpan={2}>49 - 96 (B)</th>
+              <th className="border border-black p-1 bg-[#7b113a] text-white text-center font-bold" colSpan={2}>97 - 128 (C)</th>
+              <th className="border border-black p-1 bg-[#cca300] text-black text-center font-bold" colSpan={2}>KESELURUHAN</th>
+            </tr>
+            {/* Header Row 2 */}
+            <tr className="text-black text-[10px] sm:text-[11px]">
+              <th className="border border-black p-1 bg-[#4f81bd] text-white w-20 text-center font-bold">1 - 23 JAM<br/>BIL</th>
+              <th className="border border-black p-1 bg-[#375623] text-white w-14 text-center font-bold">BIL</th>
+              <th className="border border-black p-1 bg-[#375623] text-white w-24 text-center font-bold">RM</th>
+              <th className="border border-black p-1 bg-[#4a154b] text-white w-14 text-center font-bold">BIL</th>
+              <th className="border border-black p-1 bg-[#4a154b] text-white w-24 text-center font-bold">RM</th>
+              <th className="border border-black p-1 bg-[#7b113a] text-white w-14 text-center font-bold">BIL</th>
+              <th className="border border-black p-1 bg-[#7b113a] text-white w-24 text-center font-bold">RM</th>
+              <th className="border border-black p-1 bg-[#ffc000] text-black w-14 text-center font-bold">Jumlah (A+B+C)</th>
+              <th className="border border-black p-1 bg-[#ffc000] text-black w-24 text-center font-bold">RM</th>
+            </tr>
+          </thead>
+          <tbody>
+            {districtsList.flatMap((district, dIdx) => {
+              const dData = data.districts[district] || {
+                PEG: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } },
+                APR: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } },
+                JUMLAH: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } }
+              };
+
+              const roles = ['PEG', 'APR', 'JUMLAH'];
+
+              return roles.map((role, rIdx) => {
+                const rData = dData[role] || {
+                  bracket1_23: { bil: 0, rm: 0 },
+                  bracket24_48: { bil: 0, rm: 0 },
+                  bracket49_96: { bil: 0, rm: 0 },
+                  bracket97_128: { bil: 0, rm: 0 },
+                  total: { bil: 0, rm: 0 }
+                };
+                const isJumlahRow = role === 'JUMLAH';
+                
+                // Color formatting matching the photo
+                const rowBg = isJumlahRow ? 'bg-[#ffc000] text-black font-extrabold' : 'bg-[#d9e1f2] text-black font-medium';
+
+                // Bracket columns backgrounds
+                const colE_Bg = isJumlahRow ? 'bg-[#ffc000]' : 'bg-[#b4c6e7]';
+                const colFG_Bg = isJumlahRow ? 'bg-[#ffc000]' : 'bg-[#e2efda]';
+                const colHI_Bg = isJumlahRow ? 'bg-[#ffc000]' : 'bg-[#f2dbdb]';
+                const colJK_Bg = isJumlahRow ? 'bg-[#ffc000]' : 'bg-[#eec5d3] text-black';
+                const colLM_Bg = 'bg-[#fff2cc]';
+
+                return (
+                  <tr key={`${district}-${role}`} className={`${rowBg} h-[28px] text-[11px]`}>
+                    {/* Render BIL & FORMASI on the first sub-row (PEG) of each district */}
+                    {rIdx === 0 && (
+                      <>
+                        <td className="border border-black p-1 text-center font-bold bg-white text-black" rowSpan={3}>{dIdx + 1}</td>
+                        <td className="border border-black p-1 text-left uppercase font-bold bg-white text-black pl-2" rowSpan={3}>{district}</td>
+                      </>
+                    )}
+
+                    {/* Role / Pangkat column */}
+                    <td className="border border-black p-1 uppercase text-center font-bold">{role}</td>
+
+                    {/* 1-23 JAM Column */}
+                    <td className={`border border-black p-1 text-center font-bold ${colE_Bg}`}>
+                      {formatBil(rData.bracket1_23.bil)}
+                    </td>
+
+                    {/* 24-48 (A) Columns */}
+                    <td className={`border border-black p-1 text-center font-bold ${colFG_Bg}`}>
+                      {formatBil(rData.bracket24_48.bil)}
+                    </td>
+                    <td className={`border border-black p-1 text-right pr-2 font-bold ${colFG_Bg}`}>
+                      {formatRM(rData.bracket24_48.rm)}
+                    </td>
+
+                    {/* 49-96 (B) Columns */}
+                    <td className={`border border-black p-1 text-center font-bold ${colHI_Bg}`}>
+                      {formatBil(rData.bracket49_96.bil)}
+                    </td>
+                    <td className={`border border-black p-1 text-right pr-2 font-bold ${colHI_Bg}`}>
+                      {formatRM(rData.bracket49_96.rm)}
+                    </td>
+
+                    {/* 97-128 (C) Columns */}
+                    <td className={`border border-black p-1 text-center font-bold ${colJK_Bg}`}>
+                      {formatBil(rData.bracket97_128.bil)}
+                    </td>
+                    <td className={`border border-black p-1 text-right pr-2 font-bold ${colJK_Bg}`}>
+                      {formatRM(rData.bracket97_128.rm)}
+                    </td>
+
+                    {/* KESELURUHAN (A+B+C) Columns */}
+                    <td className={`border border-black p-1 text-center font-black ${colLM_Bg} text-black`}>
+                      {formatBil(rData.total.bil)}
+                    </td>
+                    <td className={`border border-black p-1 text-right pr-2 font-black ${colLM_Bg} text-black`}>
+                      {formatRM(rData.total.rm)}
+                    </td>
+                  </tr>
+                );
+              });
+            })}
+
+            {/* JUMLAH KESELURUHAN (Bottom yellow section) */}
+            {['PEG', 'APR', 'JUMLAH'].map((role, rIdx) => {
+              const rData = data.keseluruhan[role] || {
+                bracket1_23: { bil: 0, rm: 0 },
+                bracket24_48: { bil: 0, rm: 0 },
+                bracket49_96: { bil: 0, rm: 0 },
+                bracket97_128: { bil: 0, rm: 0 },
+                total: { bil: 0, rm: 0 }
+              };
+              const isJumlahRow = role === 'JUMLAH';
+              
+              const rowBg = isJumlahRow ? 'bg-[#c6e0b4] text-black font-extrabold text-xs' : 'bg-[#e2efda] text-black font-bold text-[11px]';
+
+              return (
+                <tr key={`keseluruhan-${role}`} className={`${rowBg} h-[30px]`}>
+                  {rIdx === 0 && (
+                    <td className="border border-black p-1 uppercase text-left font-black bg-[#ffff00] text-black pl-4" colSpan={2} rowSpan={3}>
+                      JUMLAH KESELURUHAN
+                    </td>
+                  )}
+                  {/* Role / Pangkat column */}
+                  <td className="border border-black p-1 uppercase text-center font-black bg-[#ffff00] text-black">{role}</td>
+
+                  {/* 1-23 JAM */}
+                  <td className="border border-black p-1 font-black bg-[#4f81bd] text-white text-center">
+                    {formatBil(rData.bracket1_23.bil)}
+                  </td>
+
+                  {/* 24-48 (A) */}
+                  <td className="border border-black p-1 font-black bg-[#375623] text-white text-center">
+                    {formatBil(rData.bracket24_48.bil)}
+                  </td>
+                  <td className="border border-black p-1 font-black bg-[#375623] text-white text-right pr-2">
+                    {formatRM(rData.bracket24_48.rm)}
+                  </td>
+
+                  {/* 49-96 (B) */}
+                  <td className="border border-black p-1 font-black bg-[#4a154b] text-white text-center">
+                    {formatBil(rData.bracket49_96.bil)}
+                  </td>
+                  <td className="border border-black p-1 font-black bg-[#4a154b] text-white text-right pr-2">
+                    {formatRM(rData.bracket49_96.rm)}
+                  </td>
+
+                  {/* 97-128 (C) */}
+                  <td className="border border-black p-1 font-black bg-[#7b113a] text-white text-center">
+                    {formatBil(rData.bracket97_128.bil)}
+                  </td>
+                  <td className="border border-black p-1 font-black bg-[#7b113a] text-white text-right pr-2">
+                    {formatRM(rData.bracket97_128.rm)}
+                  </td>
+
+                  {/* KESELURUHAN (A+B+C) */}
+                  <td className="border border-black p-1 font-black bg-[#ffc000] text-black text-center">
+                    {formatBil(rData.total.bil)}
+                  </td>
+                  <td className="border border-black p-1 font-black bg-[#ffc000] text-black text-right pr-2">
+                    {formatRM(rData.total.rm)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        {/* Instructions Banner Footer */}
+        <div className="border border-black bg-[#ffffea] text-black text-left pl-4 py-2 mt-4 font-bold text-xs uppercase tracking-wider">
+          SILA ISIKAN BUTIRAN MENGGUNAKAN FORMAT YANG TELAH DISEDIAKAN MENGIKUT KONTINJEN
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gray-100 p-4 sm:p-8 print:p-0 print:bg-white">
       <style>{`
@@ -2684,7 +4015,8 @@ export default function App() {
             {(GOOGLE_SHEET_ID && GOOGLE_SHEET_ID !== "YOUR_GOOGLE_SHEET_ID_HERE") && (
               <button 
                 onClick={() => {
-                  fetchSheetData(GOOGLE_SHEET_ID, selectedYear);
+                  const fromYear = activeTab === 'PERSONAL' ? selectedYearFrom : selectedYear;
+                  fetchSheetData(GOOGLE_SHEET_ID, fromYear, selectedYear);
                   fetchVoucherDataLive();
                 }}
                 disabled={isLoading}
@@ -2811,6 +4143,17 @@ export default function App() {
           >
             <FileText className="w-4 h-4" />
             Penyalur Maklumat
+          </button>
+          <button
+            onClick={() => setActiveTab('FORECAST')}
+            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${
+              activeTab === 'FORECAST' 
+                ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-700' 
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <TrendingUp className="w-4 h-4" />
+            Payment Forecast
           </button>
         </div>
       </div>
@@ -2944,6 +4287,13 @@ export default function App() {
               {renderPenyalurMaklumat()}
             </div>
           )}
+
+          {(printMode === 'ALL' || activeTab === 'FORECAST') && (
+            <div className="print-page-container">
+              {renderForecastTable()}
+              {renderYearlyForecastTable()}
+            </div>
+          )}
         </div>
         
       </div>
@@ -2971,4 +4321,109 @@ export default function App() {
       )}
     </div>
   );
+}
+
+function getSamplePaymentByYear() {
+  const structure: Record<string, any> = {
+    'IPK SSPDRM': {
+      PEG: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 11, rm: 4459 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 11, rm: 4459 }
+      },
+      APR: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 38, rm: 13248 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 38, rm: 13248 }
+      },
+      JUMLAH: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 49, rm: 17707 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 49, rm: 17707 }
+      }
+    },
+    'MELAKA TENGAH': {
+      PEG: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 22, rm: 9378.60 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 22, rm: 9378.60 }
+      },
+      APR: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 651, rm: 209000 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 651, rm: 209000 }
+      },
+      JUMLAH: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 673, rm: 218378.60 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 673, rm: 218378.60 }
+      }
+    },
+    'ALOR GAJAH': {
+      PEG: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 22, rm: 9996 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 22, rm: 9996 }
+      },
+      APR: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 219, rm: 74048 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 219, rm: 74048 }
+      },
+      JUMLAH: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 241, rm: 84044 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 241, rm: 84044 }
+      }
+    },
+    'JASIN': {
+      PEG: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 11, rm: 9996 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 11, rm: 9996 }
+      },
+      APR: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 167, rm: 74048 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 167, rm: 74048 }
+      },
+      JUMLAH: {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 178, rm: 84044 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 178, rm: 84044 }
+      }
+    }
+  };
+
+  const keseluruhan = {
+    PEG: { bracket1_23: { bil:0, rm:0 }, bracket24_48: { bil:66, rm:33829.60 }, bracket49_96: { bil:0, rm:0 }, bracket97_128: { bil:0, rm:0 }, total: { bil:66, rm:33829.60 } },
+    APR: { bracket1_23: { bil:0, rm:0 }, bracket24_48: { bil:1075, rm:370344 }, bracket49_96: { bil:0, rm:0 }, bracket97_128: { bil:0, rm:0 }, total: { bil:1075, rm:370344 } },
+    JUMLAH: { bracket1_23: { bil:0, rm:0 }, bracket24_48: { bil:1141, rm:404173.60 }, bracket49_96: { bil:0, rm:0 }, bracket97_128: { bil:0, rm:0 }, total: { bil:1141, rm:404173.60 } }
+  };
+
+  return { districts: structure, keseluruhan };
 }
