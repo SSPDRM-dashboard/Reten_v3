@@ -2332,6 +2332,7 @@ export default function App() {
               <th className="border border-black p-2 w-32">NO. BADAN</th>
               <th className="border border-black p-2 w-24">PANGKAT</th>
               <th className="border border-black p-2 text-left min-w-[200px]">NAMA</th>
+              <th className="border border-black p-2 w-32">DAERAH</th>
               <th className="border border-black p-2 w-32">BALAI PENDAFTARAN</th>
               <th className="border border-black p-2 w-20">TAHUN</th>
               {monthNames.map(m => (
@@ -2362,6 +2363,7 @@ export default function App() {
                         <td className="border border-black p-1" rowSpan={yearsToRender.length}>{person.noBadan}</td>
                         <td className="border border-black p-1" rowSpan={yearsToRender.length}>{pangkat}</td>
                         <td className="border border-black p-1 text-left pl-2" rowSpan={yearsToRender.length}>{person.name}</td>
+                        <td className="border border-black p-1 uppercase" rowSpan={yearsToRender.length}>{person.latestDistrict || selectedDistrict}</td>
                       </>
                     )}
                     <td className="border border-black p-1">{yearData.balai || person.balai || ''}</td>
@@ -2376,7 +2378,7 @@ export default function App() {
             })}
             {displayedPersonnel.length === 0 && (
               <tr>
-                <td colSpan={19} className="border border-black p-4 text-gray-500">Tiada rekod anggota dijumpai untuk tempoh ini</td>
+                <td colSpan={20} className="border border-black p-4 text-gray-500">Tiada rekod anggota dijumpai untuk tempoh ini</td>
               </tr>
             )}
           </tbody>
@@ -2508,6 +2510,7 @@ export default function App() {
         "NO. BADAN",
         "PANGKAT",
         "NAMA",
+        "DAERAH",
         "BALAI PENDAFTARAN",
         "TAHUN",
         ...monthNames,
@@ -2516,10 +2519,10 @@ export default function App() {
 
       let excelRowIndex = dataRows.length; // 1-based indexing for merges, after title blocks
       const merges: any[] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: 18 } },
-        { s: { r: 1, c: 0 }, e: { r: 1, c: 18 } },
-        { s: { r: 2, c: 0 }, e: { r: 2, c: 18 } },
-        { s: { r: 3, c: 0 }, e: { r: 3, c: 18 } }
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 19 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 19 } },
+        { s: { r: 2, c: 0 }, e: { r: 2, c: 19 } },
+        { s: { r: 3, c: 0 }, e: { r: 3, c: 19 } }
       ];
 
       displayedPersonnel.forEach((person, idx) => {
@@ -2539,6 +2542,7 @@ export default function App() {
             yIdx === 0 ? person.noBadan : "",
             yIdx === 0 ? pangkat : "",
             yIdx === 0 ? person.name : "",
+            yIdx === 0 ? (person.latestDistrict || selectedDistrict) : "",
             yearData.balai || person.balai || '',
             y,
             ...yearData.months.map(m => m || 0),
@@ -2554,6 +2558,7 @@ export default function App() {
           merges.push({ s: { r: startR, c: 1 }, e: { r: endR, c: 1 } }); // NO. BADAN
           merges.push({ s: { r: startR, c: 2 }, e: { r: endR, c: 2 } }); // PANGKAT
           merges.push({ s: { r: startR, c: 3 }, e: { r: endR, c: 3 } }); // NAMA
+          merges.push({ s: { r: startR, c: 4 }, e: { r: endR, c: 4 } }); // DAERAH
         }
         excelRowIndex += yearsToRender.length;
       });
@@ -2566,6 +2571,7 @@ export default function App() {
         { wch: 15 }, // NO. BADAN
         { wch: 12 }, // PANGKAT
         { wch: 30 }, // NAMA
+        { wch: 15 }, // DAERAH
         { wch: 25 }, // BALAI PENDAFTARAN
         { wch: 10 }, // TAHUN
         ...Array(12).fill({ wch: 7 }), // JAN-DIS
