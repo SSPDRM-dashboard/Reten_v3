@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Printer, FileSpreadsheet, CalendarDays, CalendarRange, Users, Database, RefreshCw, AlertCircle, CheckCircle2, Download, User, FileText, TrendingUp, RotateCcw } from 'lucide-react';
+import { Printer, FileSpreadsheet, CalendarDays, CalendarRange, Users, Database, RefreshCw, AlertCircle, CheckCircle2, Download, User, FileText, TrendingUp } from 'lucide-react';
 import Papa from 'papaparse';
 import html2pdf from 'html2pdf.js';
 
@@ -78,30 +78,6 @@ export default function App() {
   const [selectedPerson, setSelectedPerson] = useState('ALL');
   const [searchNoBadan, setSearchNoBadan] = useState('');
   const [selectedNoBadanList, setSelectedNoBadanList] = useState<string[]>(Array(10).fill(''));
-  const [overriddenDailyHours, setOverriddenDailyHours] = useState<Record<string, number[]>>(() => {
-    try {
-      const saved = localStorage.getItem('sspdrm_overridden_daily_hours');
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) {
-      return {};
-    }
-  });
-  const [overriddenTotalHours, setOverriddenTotalHours] = useState<Record<string, number>>(() => {
-    try {
-      const saved = localStorage.getItem('sspdrm_overridden_total_hours');
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) {
-      return {};
-    }
-  });
-  const [overriddenCappedHours, setOverriddenCappedHours] = useState<Record<string, number>>(() => {
-    try {
-      const saved = localStorage.getItem('sspdrm_overridden_capped_hours');
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) {
-      return {};
-    }
-  });
   const [voucherData, setVoucherData] = useState<any[]>([]);
   const [voucherDataLive, setVoucherDataLive] = useState<any[]>([]);
   const [attendanceDataLive, setAttendanceDataLive] = useState<any[]>([]);
@@ -1507,7 +1483,7 @@ export default function App() {
 
     personMonthMap.forEach((entry) => {
       let h = entry.hours;
-      h = Math.min(h, 48); // Cap total duty hours to 48 so calculation correctly falls into the 24-48 bracket
+      h = Math.min(h, 24); // Cap total duty hours to 24 so calculation correctly falls into the 24 bracket
 
       const r = entry.rank.toUpperCase();
       const isPeg = r.includes('SUPT') || r.includes('DSP') || r.includes('ASP') || r.includes('INSP');
@@ -1517,9 +1493,9 @@ export default function App() {
       const dist = entry.district;
       if (!structure[dist]) return;
 
-      const paidHours = Math.min(h, 48); // Keeping Math.min here is redundant but safe
+      const paidHours = Math.min(h, 24); // Keeping Math.min here is redundant but safe
 
-      if (h <= 48) {
+      if (h <= 24) {
         structure[dist][category].bracket24_48.bil += 1;
         structure[dist][category].bracket24_48.rm += paidHours * rate;
       } else if (h <= 96) {
@@ -1761,7 +1737,7 @@ export default function App() {
 
     personMonthMap.forEach((entry) => {
       let h = entry.hours;
-      h = Math.min(h, 48); // Cap total duty hours to 48 PER MONTH
+      h = Math.min(h, 24); // Cap total duty hours to 24 PER MONTH
 
       const r = entry.rank.toUpperCase();
       const isPeg = r.includes('SUPT') || r.includes('DSP') || r.includes('ASP') || r.includes('INSP');
@@ -1771,9 +1747,9 @@ export default function App() {
       const dist = entry.district;
       if (!structure[dist]) return;
 
-      const paidHours = Math.min(h, 48);
+      const paidHours = Math.min(h, 24);
 
-      if (h <= 48) {
+      if (h <= 24) {
         structure[dist][category].bracket24_48.bil += 1;
         structure[dist][category].bracket24_48.rm += paidHours * rate;
       } else if (h <= 96) {
@@ -2472,7 +2448,7 @@ export default function App() {
               <th className="border border-black p-1 w-40 text-left pl-2" rowSpan={2}>FORMASI</th>
               <th className="border border-black p-1 w-24 text-center" rowSpan={2}>PANGKAT</th>
               <th className="border border-black p-1 bg-[#3a60a1] text-white w-20 text-center font-bold" colSpan={1}>JUMLAH JAM BERTUGAS</th>
-              <th className="border border-black p-1 bg-[#1e7c53] text-white text-center font-bold" colSpan={2}>24 - 48 (A)</th>
+              <th className="border border-black p-1 bg-[#1e7c53] text-white text-center font-bold" colSpan={2}>24 (A)</th>
               <th className="border border-black p-1 bg-[#4a154b] text-white text-center font-bold" colSpan={2}>49 - 96 (B)</th>
               <th className="border border-black p-1 bg-[#7b113a] text-white text-center font-bold" colSpan={2}>97 - 128 (C)</th>
               <th className="border border-black p-1 bg-[#cca300] text-black text-center font-bold" colSpan={2}>KESELURUHAN</th>
@@ -2967,7 +2943,7 @@ export default function App() {
     const daysArray = Array.from({ length: 31 }, (_, i) => i + 1);
 
     // Filter rawData to get daily hours for the 10 selected people
-    const getPersonnelDailyHours = (noBadan: string, ignoreOverrides = false) => {
+    const getPersonnelDailyHours = (noBadan: string) => {
       const dailyHours = Array(31).fill(0);
       let name = '';
       let rank = '';
@@ -2993,7 +2969,7 @@ export default function App() {
 
       if (isLive) {
         // Use attendanceDataLive for hours and dates
-        if (!attendanceDataLive || attendanceDataLive.length === 0) return { dailyHours, name, rank, totalHours: 0, cappedHours: 0 };
+        if (!attendanceDataLive || attendanceDataLive.length === 0) return { dailyHours, name, rank, totalHours: 0 };
 
         // Find the person in processedData.districtPersonnel first to get their name and rank (consistent with backup)
         const person = processedData.districtPersonnel.find(p => {
@@ -3064,19 +3040,11 @@ export default function App() {
         });
 
         const totalHours = dailyHours.reduce((a, b) => a + b, 0);
-        
-        const key = `${isLive ? 'live' : 'backup'}_${selectedYear}_${selectedMonth}_${targetNo}`;
-        const finalDailyHours = (!ignoreOverrides && overriddenDailyHours[key]) ? [...overriddenDailyHours[key]] : dailyHours;
-        const computedTotalHours = finalDailyHours.reduce((a, b) => a + b, 0);
-        const finalTotalHours = (!ignoreOverrides && overriddenTotalHours[key] !== undefined) ? overriddenTotalHours[key] : computedTotalHours;
-        const computedCappedHours = Math.min(finalTotalHours, 48);
-        const finalCappedHours = (!ignoreOverrides && overriddenCappedHours[key] !== undefined) ? overriddenCappedHours[key] : computedCappedHours;
-
-        return { dailyHours: finalDailyHours, name, rank, totalHours: finalTotalHours, cappedHours: finalCappedHours };
+        return { dailyHours, name, rank, totalHours };
       }
 
       // BACKUP DATA LOGIC (Original)
-      if (!noBadan || !rawData || rawData.length === 0) return { dailyHours, name, rank, totalHours: 0, cappedHours: 0 };
+      if (!noBadan || !rawData || rawData.length === 0) return { dailyHours, name, rank, totalHours: 0 };
 
       // Find the person in processedData.districtPersonnel first to get their name
       const person = processedData.districtPersonnel.find(p => {
@@ -3087,7 +3055,7 @@ export default function App() {
         return pNo === tNo;
       });
 
-      if (!person) return { dailyHours, name, rank, totalHours: 0, cappedHours: 0 };
+      if (!person) return { dailyHours, name, rank, totalHours: 0 };
       
       name = person.name.replace(/[0-9]/g, '').trim();
       rank = person.rank;
@@ -3111,7 +3079,7 @@ export default function App() {
         }
       }
 
-      if (headerRowIndex === -1) return { dailyHours, name, rank, totalHours: 0, cappedHours: 0 };
+      if (headerRowIndex === -1) return { dailyHours, name, rank, totalHours: 0 };
 
       rawData.slice(headerRowIndex + 1).forEach((row) => {
         if (!Array.isArray(row)) return;
@@ -3165,94 +3133,7 @@ export default function App() {
       });
 
       const totalHours = dailyHours.reduce((a, b) => a + b, 0);
-      
-      const key = `${isLive ? 'live' : 'backup'}_${selectedYear}_${selectedMonth}_${targetNo}`;
-      const finalDailyHours = (!ignoreOverrides && overriddenDailyHours[key]) ? [...overriddenDailyHours[key]] : dailyHours;
-      const computedTotalHours = finalDailyHours.reduce((a, b) => a + b, 0);
-      const finalTotalHours = (!ignoreOverrides && overriddenTotalHours[key] !== undefined) ? overriddenTotalHours[key] : computedTotalHours;
-      const computedCappedHours = Math.min(finalTotalHours, 48);
-      const finalCappedHours = (!ignoreOverrides && overriddenCappedHours[key] !== undefined) ? overriddenCappedHours[key] : computedCappedHours;
-
-      return { dailyHours: finalDailyHours, name, rank, totalHours: finalTotalHours, cappedHours: finalCappedHours };
-    };
-
-    // Helper functions to update overridden hours from inputs
-    const updateDailyHour = (noBadan: string, dayIdx: number, val: number) => {
-      const normalize = (s: string) => String(s || '').replace(/[^0-9]/g, '');
-      const targetNo = normalize(noBadan);
-      if (!targetNo) return;
-
-      const key = `${isLive ? 'live' : 'backup'}_${selectedYear}_${selectedMonth}_${targetNo}`;
-      
-      const baseline = getPersonnelDailyHours(noBadan, true);
-      const current = overriddenDailyHours[key] ? [...overriddenDailyHours[key]] : [...baseline.dailyHours];
-      current[dayIdx] = val;
-
-      const newDaily = {
-        ...overriddenDailyHours,
-        [key]: current
-      };
-      setOverriddenDailyHours(newDaily);
-      try {
-        localStorage.setItem('sspdrm_overridden_daily_hours', JSON.stringify(newDaily));
-      } catch (e) {}
-
-      // Clear total/capped overrides because daily hours changed
-      const newTotals = { ...overriddenTotalHours };
-      delete newTotals[key];
-      setOverriddenTotalHours(newTotals);
-      try {
-        localStorage.setItem('sspdrm_overridden_total_hours', JSON.stringify(newTotals));
-      } catch (e) {}
-
-      const newCapped = { ...overriddenCappedHours };
-      delete newCapped[key];
-      setOverriddenCappedHours(newCapped);
-      try {
-        localStorage.setItem('sspdrm_overridden_capped_hours', JSON.stringify(newCapped));
-      } catch (e) {}
-    };
-
-    const updateDirectTotalHours = (noBadan: string, val: number) => {
-      const normalize = (s: string) => String(s || '').replace(/[^0-9]/g, '');
-      const targetNo = normalize(noBadan);
-      if (!targetNo) return;
-
-      const key = `${isLive ? 'live' : 'backup'}_${selectedYear}_${selectedMonth}_${targetNo}`;
-      
-      const newTotals = {
-        ...overriddenTotalHours,
-        [key]: val
-      };
-      setOverriddenTotalHours(newTotals);
-      try {
-        localStorage.setItem('sspdrm_overridden_total_hours', JSON.stringify(newTotals));
-      } catch (e) {}
-
-      // Clear capped override because total hours changed
-      const newCapped = { ...overriddenCappedHours };
-      delete newCapped[key];
-      setOverriddenCappedHours(newCapped);
-      try {
-        localStorage.setItem('sspdrm_overridden_capped_hours', JSON.stringify(newCapped));
-      } catch (e) {}
-    };
-
-    const updateDirectCappedHours = (noBadan: string, val: number) => {
-      const normalize = (s: string) => String(s || '').replace(/[^0-9]/g, '');
-      const targetNo = normalize(noBadan);
-      if (!targetNo) return;
-
-      const key = `${isLive ? 'live' : 'backup'}_${selectedYear}_${selectedMonth}_${targetNo}`;
-      
-      const newCapped = {
-        ...overriddenCappedHours,
-        [key]: val
-      };
-      setOverriddenCappedHours(newCapped);
-      try {
-        localStorage.setItem('sspdrm_overridden_capped_hours', JSON.stringify(newCapped));
-      } catch (e) {}
+      return { dailyHours, name, rank, totalHours };
     };
 
     const getRate = (rank: string) => {
@@ -3314,49 +3195,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Reset manual edits control bar - hidden in print */}
-            <div className="flex flex-wrap items-center justify-between mb-2 gap-2 print:hidden bg-blue-50 border border-blue-100 p-2 rounded-lg">
-              <span className="text-xs text-blue-800 flex items-center gap-1">
-                <span className="font-semibold">💡 Tip:</span> 
-                Klik pada mana-mana sel tarikh (1-31), <span className="font-semibold">Jumlah Jam</span>, atau <span className="font-semibold">Jumlah Jam Dibayar</span> di bawah untuk menukar nilainya terus.
-              </span>
-              <button
-                onClick={() => {
-                  if (window.confirm("Adakah anda pasti untuk menetapkan semula semua pindaan manual untuk bulan ini?")) {
-                    const updatedDaily = { ...overriddenDailyHours };
-                    const updatedTotal = { ...overriddenTotalHours };
-                    const updatedCapped = { ...overriddenCappedHours };
-                    
-                    // Remove keys matching this month/year/tab
-                    const prefix = `${isLive ? 'live' : 'backup'}_${selectedYear}_${selectedMonth}_`;
-                    Object.keys(updatedDaily).forEach(k => {
-                      if (k.startsWith(prefix)) delete updatedDaily[k];
-                    });
-                    Object.keys(updatedTotal).forEach(k => {
-                      if (k.startsWith(prefix)) delete updatedTotal[k];
-                    });
-                    Object.keys(updatedCapped).forEach(k => {
-                      if (k.startsWith(prefix)) delete updatedCapped[k];
-                    });
-
-                    setOverriddenDailyHours(updatedDaily);
-                    setOverriddenTotalHours(updatedTotal);
-                    setOverriddenCappedHours(updatedCapped);
-
-                    try {
-                      localStorage.setItem('sspdrm_overridden_daily_hours', JSON.stringify(updatedDaily));
-                      localStorage.setItem('sspdrm_overridden_total_hours', JSON.stringify(updatedTotal));
-                      localStorage.setItem('sspdrm_overridden_capped_hours', JSON.stringify(updatedCapped));
-                    } catch (e) {}
-                  }
-                }}
-                className="flex items-center gap-1.5 px-3 py-1 text-xs font-semibold bg-white hover:bg-gray-50 text-gray-700 rounded-lg border border-gray-300 transition-colors shadow-sm cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                Reset Manual Edits ({isLive ? 'Live' : 'Backup'})
-              </button>
-            </div>
-
             <div className="overflow-x-auto relative">
               {isLoading && (
                 <div className="absolute inset-0 flex items-center justify-center z-20 print:hidden" style={{ backgroundColor: 'rgba(255, 255, 255, 0.5)' }}>
@@ -3410,8 +3248,9 @@ export default function App() {
                   {Array.from({ length: 15 }).map((_, idx) => {
                     if (idx < 10) {
                       const noBadan = selectedNoBadanList[idx] || '';
-                      const { dailyHours, name, rank, totalHours, cappedHours } = getPersonnelDailyHours(noBadan);
+                      const { dailyHours, name, rank, totalHours } = getPersonnelDailyHours(noBadan);
                       const rate = getRate(rank);
+                      const cappedHours = Math.min(totalHours, 24);
                       const allowance = cappedHours * rate;
                       const kedatangan = dailyHours.filter(h => h > 0).length;
                       
@@ -3440,47 +3279,11 @@ export default function App() {
                           <td className="border border-black p-1">{rank}</td>
                           <td className="border border-black p-1 text-left truncate print:text-[8px] leading-tight max-w-[150px]">{name || (noBadan ? 'NOT FOUND' : '')}</td>
                           {dailyHours.map((h, i) => (
-                            <td key={i} className="border border-black p-0 text-[10px] relative">
-                              <input 
-                                type="text"
-                                value={h || ''}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value) || 0;
-                                  updateDailyHour(noBadan, i, val);
-                                }}
-                                className="w-full h-full text-center bg-transparent border-none outline-none font-bold text-[10px] focus:bg-yellow-50 print:hidden"
-                                disabled={!noBadan}
-                              />
-                              <span className="hidden print:block w-full text-center font-bold text-[10px]">{h || ''}</span>
-                            </td>
+                            <td key={i} className="border border-black p-0 text-[10px]">{h || ''}</td>
                           ))}
                           <td className="border border-black p-1">{kedatangan || ''}</td>
-                          <td className="border border-black p-0 relative">
-                            <input 
-                              type="text"
-                              value={totalHours || ''}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value) || 0;
-                                updateDirectTotalHours(noBadan, val);
-                              }}
-                              className="w-full h-full text-center bg-transparent border-none outline-none font-bold text-[10px] focus:bg-yellow-50 print:hidden"
-                              disabled={!noBadan}
-                            />
-                            <span className="hidden print:block w-full text-center font-bold text-[10px]">{totalHours || ''}</span>
-                          </td>
-                          <td className="border border-black p-0 relative">
-                            <input 
-                              type="text"
-                              value={cappedHours || ''}
-                              onChange={(e) => {
-                                const val = parseFloat(e.target.value) || 0;
-                                updateDirectCappedHours(noBadan, val);
-                              }}
-                              className="w-full h-full text-center bg-transparent border-none outline-none font-bold text-[10px] focus:bg-yellow-50 print:hidden"
-                              disabled={!noBadan}
-                            />
-                            <span className="hidden print:block w-full text-center font-bold text-[10px]">{cappedHours || ''}</span>
-                          </td>
+                          <td className="border border-black p-1">{totalHours || ''}</td>
+                          <td className="border border-black p-1">{cappedHours || ''}</td>
                           <td className="border border-black p-1"></td>
                           <td className="border border-black p-1">{noBadan ? rate.toFixed(2) : ''}</td>
                           <td className="border border-black p-1"></td>
@@ -3579,7 +3382,7 @@ export default function App() {
                 <div className="pt-4 print:pt-2 w-64"></div>
               </div>
               <div className="space-y-1">
-                <div className="font-bold">PERINGATAN A : Elaun belania latihan yang terbanyak dalam tiap-tiap bulan ialah mengenai latihan/tugas 48 jam</div>
+                <div className="font-bold">PERINGATAN A : Elaun belania latihan yang terbanyak dalam tiap-tiap bulan ialah mengenai latihan/tugas 24 jam</div>
                 <div className="font-bold">PERINGATAN B : Elaun kenderaan ialah satu daripada berikut:</div>
                 <div className="grid grid-cols-3 gap-2">
                   <div>(a) Elaun kenderaan (E.K) tetap basikal</div>
@@ -3613,8 +3416,9 @@ export default function App() {
             </thead>
             <tbody>
               {selectedNoBadanList.map((noBadan, idx) => {
-                const { name, rank, totalHours, cappedHours } = getPersonnelDailyHours(noBadan);
+                const { name, rank, totalHours } = getPersonnelDailyHours(noBadan);
                 const rate = getRate(rank);
+                const cappedHours = Math.min(totalHours, 24);
                 const allowance = cappedHours * rate;
                 const targetNo = noBadan.replace(/[^0-9]/g, '');
                 
@@ -3694,7 +3498,7 @@ export default function App() {
               <th className="border border-black p-3 w-48 text-left uppercase">FORMASI</th>
               <th className="border border-black p-3 w-28 text-center">PANGKAT</th>
               <th className="border border-black p-3 w-40 bg-[#166534] text-center">BILANGAN ANGGOTA (&gt;= 24 JAM)</th>
-              <th className="border border-black p-3 bg-[#eab308] text-black text-center">JUMLAH TUNTUTAN ELAUN (RM)<br/>(MAKSIMUM 48 JAM)</th>
+              <th className="border border-black p-3 bg-[#eab308] text-black text-center">JUMLAH TUNTUTAN ELAUN (RM)<br/>(MAKSIMUM 24 JAM)</th>
             </tr>
           </thead>
           <tbody>
@@ -3800,7 +3604,7 @@ export default function App() {
               <th className="border border-black p-1 w-40 text-left pl-2" rowSpan={2}>FORMASI</th>
               <th className="border border-black p-1 w-24 text-center" rowSpan={2}>PANGKAT</th>
               <th className="border border-black p-1 bg-[#3a60a1] text-white w-20 text-center font-bold" colSpan={1}>JUMLAH JAM BERTUGAS</th>
-              <th className="border border-black p-1 bg-[#1e7c53] text-white text-center font-bold" colSpan={2}>24 - 48 (A)</th>
+              <th className="border border-black p-1 bg-[#1e7c53] text-white text-center font-bold" colSpan={2}>24 (A)</th>
               <th className="border border-black p-1 bg-[#4a154b] text-white text-center font-bold" colSpan={2}>49 - 96 (B)</th>
               <th className="border border-black p-1 bg-[#7b113a] text-white text-center font-bold" colSpan={2}>97 - 128 (C)</th>
               <th className="border border-black p-1 bg-[#cca300] text-black text-center font-bold" colSpan={2}>KESELURUHAN</th>
