@@ -13,6 +13,135 @@ const tasksList = [
 
 const ranksList = ['ASP', 'INSP', 'SI', 'SM', 'SJN', 'KPL', 'L/KPL', 'KONSTABEL'];
 
+const ACTIVE_PERSONNEL_2026 = [
+  { noBadan: "1214", name: "SHAHARIL BIN HJ TUMIN" },
+  { noBadan: "1518", name: "LEE CHOON MING" },
+  { noBadan: "1528", name: "ROSZIAH BINTI ROSMAN" },
+  { noBadan: "1654", name: "WONG LIAN FOOK" },
+  { noBadan: "1655", name: "KAMALA DEVI A/P MURUGASU" },
+  { noBadan: "1216", name: "MURUGAN A/L RASSIAH" },
+  { noBadan: "17446", name: "MOHAMAD HAIRI BIN AYOB" },
+  { noBadan: "39098", name: "MICHAEL TAY BOON LEE @ MUHAMMAD HAIKAL TAY" },
+  { noBadan: "39150", name: "MUHAMMAD IZWAR SHAFIE BIN MD.AZZLI" },
+  { noBadan: "39183", name: "RAJESHKANA A/L CHANDRAN" },
+  { noBadan: "39339", name: "MUHAMMAD HAFIZAN BIN ZAKARIA" },
+  { noBadan: "39343", name: "MUHAMMAD HAZIZI BIN MOHD TAHIR" },
+  { noBadan: "39352", name: "MUHAMMAD ZAIDI AMRI BIN AHMAD MOKHTAR" },
+  { noBadan: "39486", name: "NOR AZIMI BIN AYUP" },
+  { noBadan: "39597", name: "MOHD MAHYUDDIN BIN AB RAHIM" },
+  { noBadan: "39648", name: "MUHAMMAD HAZIQ BIN IBRAHIM" },
+  { noBadan: "39678", name: "NOORFARADILA BTE KHALID" },
+  { noBadan: "39831", name: "MUHAMMAD ROSLAN BIN MAHAMAD HUSAIN" },
+  { noBadan: "39861", name: "NOR AMIRA BT KHAMIS" },
+  { noBadan: "50246", name: "MUSTAQIM BIN MOHAMAD AZIZ" },
+  { noBadan: "17344", name: "ZULHISHAM BIN OTHMAN" },
+  { noBadan: "17379", name: "ZULKEFLY BIN MD ZIN" },
+  { noBadan: "17382", name: "MOHAMAD  JUMADI B. TAIB" },
+  { noBadan: "17401", name: "MD SAAD BIN MA`MIN" },
+  { noBadan: "17451", name: "MOHD KHAIRY BIN AZIZ" },
+  { noBadan: "17505", name: "LIM CHEE KHIAM" },
+  { noBadan: "17546", name: "MOHAMAD NIZAM BIN KALIL" },
+  { noBadan: "17551", name: "MOHD FAIZAL BIN A.JABAR" },
+  { noBadan: "17570", name: "ROHAIZIZIEE BIN HAMZAH" },
+  { noBadan: "17587", name: "M SULIANO BIN JAMSOR" },
+  { noBadan: "17592", name: "MUHAMMAD SHAWALUDDIN BIN ZAINAL" },
+  { noBadan: "39028", name: "NOOR HIDAYAH BINTI MAMAT" },
+  { noBadan: "39029", name: "NOR AFIDAH BINTI DOLMAT" },
+  { noBadan: "39093", name: "LEE EIT SENG" },
+  { noBadan: "39097", name: "MD RASIDI BIN IBRAHIM" },
+  { noBadan: "39141", name: "MUHAMMAD AMIRUL BIN ISMAIL" },
+  { noBadan: "39149", name: "MUHAMMAD IKHWAN BIN NOR AZMI" },
+  { noBadan: "39163", name: "MUZAMMIL BIN ABDUL RAHMAN" },
+  { noBadan: "39173", name: "NORISHARIZAL BIN ISMAIL" },
+  { noBadan: "39222", name: "NORAZIAH BT KHAMIS" },
+  { noBadan: "39251", name: "SITI RAHMAH BINTI SHARIF" },
+  { noBadan: "39265", name: "FIRDAUS BIN ZAINI" },
+  { noBadan: "39270", name: "HONG CHEW CHENG" },
+  { noBadan: "39297", name: "MOHD AFFANDI BIN SAMAH" },
+  { noBadan: "39301", name: "MOHD FADLI SHAH BIN ABU BAKAR" },
+  { noBadan: "39322", name: "MOHD ZULKIFLI BIN ISMAIL" },
+  { noBadan: "39368", name: "SYAFIQ BIN SALLEH" },
+  { noBadan: "39375", name: "ZAINUDDIN BIN AWANG" },
+  { noBadan: "39379", name: "FADHILA BINTI ALWI" },
+  { noBadan: "39400", name: "NUR FASREEN BINTI MOHD FUZI" },
+  { noBadan: "39432", name: "FAIRUL RAFIQ BIN HARIS" },
+  { noBadan: "39445", name: "MOHD FARIZAL BIN BAHARI" },
+  { noBadan: "39516", name: "ASHRAFIK BIN AMIR" },
+  { noBadan: "39537", name: "HAFIZI BIN ALI" },
+  { noBadan: "39539", name: "HAMIDAH BINTI MOHD" },
+  { noBadan: "39552", name: "KHAIRUL AZIZI BIN AIYUB" },
+  { noBadan: "39554", name: "KHAIRUL NAIM BIN CHE AMAT" },
+  { noBadan: "39555", name: "KHAIRUL NIZAM BIN KASIM" },
+  { noBadan: "39564", name: "MEGAWATI BINTI JOHANES@ROSLI" },
+  { noBadan: "39588", name: "MOHD FARID BIN ZAINAL" },
+  { noBadan: "39598", name: "MOHD NAZIR BIN TAIB" },
+  { noBadan: "39614", name: "MUHAMAD AFIQ BIN ABDUL JALAL" },
+  { noBadan: "39685", name: "NOR FATIHA BINTI ABDUL RAHMAN" },
+  { noBadan: "39698", name: "NORKHAIRY BIN ALWI" },
+  { noBadan: "39722", name: "NUR SYAHIDA BINTI MUSTAFFA" },
+  { noBadan: "39738", name: "NURUL NAJWA BT OVELIZA" },
+  { noBadan: "39742", name: "ROFEATUL HAWIYAH BINTI MAMAT" },
+  { noBadan: "39751", name: "SARIMAH BINTI NORDIN" },
+  { noBadan: "39752", name: "SATHIABAMA A/P GURUSAMY" },
+  { noBadan: "39802", name: "ZAINAB BINTI MOHAMMED HUSSEIN" },
+  { noBadan: "39806", name: "ZURAINA HANUM BINTI NASER" },
+  { noBadan: "39824", name: "IZZA NUR KHALEEDA BINTI NOH" },
+  { noBadan: "39828", name: "LEE MING YEE" },
+  { noBadan: "39860", name: "MOHD SAIFULLAH BIN ABD GHANI" },
+  { noBadan: "39866", name: "MUHAMMAD HELMI BIN BAHARIM" },
+  { noBadan: "39910", name: "NASIRAH BINTI ABDULLAH" },
+  { noBadan: "39931", name: "SYAIDHATUL AMIRRA BINTI SABAR" },
+  { noBadan: "48366", name: "NORHA BIN HANIFFA" },
+  { noBadan: "17477", name: "MOHAMMAD AZIZI BIN AB AZIZ" },
+  { noBadan: "17490", name: "MOHD SAFARUDDIN SHAH BIN MOHD SAID" },
+  { noBadan: "17555", name: "MOHD RASID BIN A.AZIZ" },
+  { noBadan: "39090", name: "JEFFREY TOH YOKE CHENG" },
+  { noBadan: "39092", name: "KHAIROL IZLAN BIN KHALID" },
+  { noBadan: "39106", name: "MOHAN A/L JAI SHANKAR" },
+  { noBadan: "39117", name: "MOHD HELMI BIN SADOM" },
+  { noBadan: "39124", name: "MOHD PAUZI BIN AZIZ" },
+  { noBadan: "39134", name: "MOHMAD JAFFRIE BIN MD ZAHAR" },
+  { noBadan: "39206", name: " HAFISZA BINTI RAUF" },
+  { noBadan: "39267", name: "HAMID B SAIBUN" },
+  { noBadan: "39278", name: "MASRULNIZAM BIN HJ RAMLI" },
+  { noBadan: "39293", name: "MUHAMMAD FARIS BIN SEMAN" },
+  { noBadan: "39294", name: "MOHAMMAD KHAIRUL BIN HASHIM" },
+  { noBadan: "39305", name: "MOHD FAIZOL BIN MOHAMAD" },
+  { noBadan: "39320", name: "MOHD ZAIDI BIN SAID" },
+  { noBadan: "39321", name: "MOHD ZAMANY BIN ISMAIL" },
+  { noBadan: "39347", name: "MUHAMMAD KHAIRUL BIN KABARUL AZMAN" },
+  { noBadan: "39348", name: "MUHAMMAD MUKLIS BIN CHE AMAT" },
+  { noBadan: "39357", name: "RIZMAN SHAH BIN SULAIMAN" },
+  { noBadan: "39365", name: "SHAIFUL BIN MKOD ANUAR" },
+  { noBadan: "39367", name: "SUSHIL MURLITHARAN NAIR" },
+  { noBadan: "39390", name: "NOORLINI BINTI MUHAMMAD SHAHPIIE" },
+  { noBadan: "39503", name: "AHMAD FARIS BIN ANUAR" },
+  { noBadan: "39504", name: "AHMAD HAKIM BIN KHOILED" },
+  { noBadan: "39549", name: "JULIANA BINTI JOHARI" },
+  { noBadan: "39562", name: "MASMIRA BINTI ABDUL NADIN" },
+  { noBadan: "39584", name: "MOHD EZWAN BIN ESHAK" },
+  { noBadan: "39586", name: "MOHD FAIRUZ BIN ABDUL KARIM(PBM)" },
+  { noBadan: "39603", name: "MOHD RASHIDDI BIN MOHD RAHIM" },
+  { noBadan: "39604", name: "MOHD RIDHUWAN BIN ISMAIL" },
+  { noBadan: "39606", name: "MOHD SHARIFF BIN JAAFAR" },
+  { noBadan: "39607", name: " MOHD SYARUL HAFFIZ BIN MOHAMAD RAFIE" },
+  { noBadan: "39627", name: "MUHAMAD SYAZWAN BIN AYOB" },
+  { noBadan: "39660", name: "MUHAMMAD SHAHROL AZWAN BIN HISLAM" },
+  { noBadan: "39696", name: "NOR HAFIZAH BT MAT JAN" },
+  { noBadan: "39707", name: "NUR 'AQILAH BINTI ROSLAN" },
+  { noBadan: "39709", name: "NUR AZLINA BINTI MOHD NOR" },
+  { noBadan: "39716", name: "NUR HIDAYAH BINTI HAMZAH" },
+  { noBadan: "39749", name: "SAMSUDIN BIN ZAINAL ABIDIN" },
+  { noBadan: "39760", name: "SHAWALUDIN BIN AHMAD" },
+  { noBadan: "39800", name: "ZAFAIZAH BINTI AB LAH" },
+  { noBadan: "39842", name: "MUHAMMAD NAJIB BIN YAZID" },
+  { noBadan: "39863", name: "MUHAMMAD MAZLAN B JAMALUDDIN" },
+  { noBadan: "39916", name: "NUR DIANAH SYAKIRAH BINTI ZAKARIA" },
+  { noBadan: "39942", name: "SITI HAJAR BT RAHIM" },
+  { noBadan: "17342", name: "TARME SHAHRIL BIN HJ TAMBICIK" },
+  { noBadan: "17595", name: "LIM HOCK GUAN" }
+];
+
 const mockDailyData = [
   { id: 1, days: [7, null, 15, null, null, 8, 7, 8, 8, 15, 15, 7, null, 15, 23, 16, 8, 12, 16, 24, 8, 8, 8, null, null, null, null, null, null, null, null] },
   { id: 2, days: [8, 8, null, 8, 4, 4, 4, 4, 8, 8, null, 4, 9, 5, null, 11, 5, null, 8, 24, 11, 16, 8, null, null, 5, null, null, null, null, null] },
@@ -597,6 +726,36 @@ export default function App() {
     const weekly = tasksList.map((task, i) => ({ id: i + 1, name: task, weeks: Array(5).fill(0) }));
     const rank = tasksList.map((task, i) => ({ id: i + 1, name: task, ranks: Array(8).fill(null) }));
     const personalMap = new Map<string, any>();
+    
+    // Pre-populate personalMap with ACTIVE_PERSONNEL_2026
+    const defDistrict = selectedDistrict === 'SEMUA DAERAH' ? 'MELAKA TENGAH' : selectedDistrict;
+    ACTIVE_PERSONNEL_2026.forEach(person => {
+      const personName = person.name.trim().toUpperCase();
+      const finalNoBadan = person.noBadan.trim();
+      const cleanNameLong = personName;
+      const cleanNameForKey = cleanNameLong.replace(/[^A-Z]/g, '');
+      const normalizedKey = `${finalNoBadan}|${cleanNameForKey}`;
+      
+      const initialYears: any = {};
+      years.forEach(y => {
+        initialYears[y] = { months: Array(12).fill(0), total: 0, balai: '' };
+      });
+      
+      personalMap.set(normalizedKey, {
+        name: cleanNameLong,
+        rank: 'KONSTABEL',
+        noBadan: finalNoBadan,
+        balai: '-',
+        years: initialYears,
+        months: Array(12).fill(0),
+        total: 0,
+        latestDistrict: defDistrict,
+        latestDateValue: 0,
+        districts: new Set<string>(),
+        districtsByYear: {}
+      });
+    });
+
     const debugLogs: any[] = [];
 
     if (!rawData || rawData.length === 0) {
@@ -883,6 +1042,22 @@ export default function App() {
         }
       }
     }
+
+    // Post-process personalMap to ensure district and year compatibility for pre-populated active list
+    personalMap.forEach((pData) => {
+      if (pData.latestDistrict) {
+        if (!pData.districtsByYear) pData.districtsByYear = {};
+        years.forEach(y => {
+          if (!pData.districtsByYear[y]) {
+            pData.districtsByYear[y] = new Set<string>();
+          }
+          if (pData.districtsByYear[y].size === 0) {
+            pData.districtsByYear[y].add(pData.latestDistrict);
+          }
+        });
+        pData.districts.add(pData.latestDistrict);
+      }
+    });
 
     const getRankPriority = (rank: string) => {
       const normalized = rank.toUpperCase().trim();
