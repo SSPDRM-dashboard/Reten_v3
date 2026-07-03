@@ -2414,6 +2414,169 @@ export default function App() {
     document.body.removeChild(fileDownload);
   };
 
+  const exportPersonalToExcel = () => {
+    const monthNames = ['JAN', 'FEB', 'MAC', 'APR', 'MEI', 'JUN', 'JUL', 'OGOS', 'SEPT', 'OKT', 'NOV', 'DIS'];
+    
+    let displayedPersonnel = processedData.personal;
+    
+    if (selectedPerson !== 'ALL') {
+      displayedPersonnel = processedData.personal.filter(p => p.name === selectedPerson);
+      if (displayedPersonnel.length === 0 && selectedPerson === loggedInName) {
+        displayedPersonnel = processedData.personal.filter(p => 
+          p.name.includes(loggedInName) || loggedInName.includes(p.name)
+        );
+      }
+    }
+
+    const startY = Math.min(selectedYearFrom, selectedYear);
+    const endY = Math.max(selectedYearFrom, selectedYear);
+    const yearsToRender: number[] = [];
+    for (let y = startY; y <= endY; y++) {
+      yearsToRender.push(y);
+    }
+
+    const wb = XLSX.utils.book_new();
+    const dataRows: any[][] = [];
+
+    // Header title rows
+    dataRows.push(["SUKARELAWAN SIMPANAN POLIS DIRAJA MALAYSIA (SSPDRM)"]);
+    dataRows.push([`KONTINJEN : MELAKA`]);
+    dataRows.push([`DAERAH : ${selectedDistrict}`]);
+    const yearRangeStr = selectedYearFrom !== selectedYear ? `${startY} - ${endY}` : `${selectedYear}`;
+    dataRows.push([`JUMLAH JAM PENUGASAN BULANAN BAGI TAHUN ${yearRangeStr}`]);
+    dataRows.push([]); // spacer row
+
+    if (selectedPerson !== 'ALL' && displayedPersonnel.length > 0) {
+      // Single person view
+      const person = displayedPersonnel[0];
+      let pangkat = person.rank;
+      const rankParts = person.rank.split(' ');
+      if (rankParts.length > 1) {
+        pangkat = rankParts[0];
+      } else if (rankParts.length === 1 && /^\d+$/.test(rankParts[0])) {
+        pangkat = ''; 
+      }
+
+      dataRows.push([`NAMA: ${person.name}`, "", "", `NO. BADAN: ${person.noBadan}`]);
+      dataRows.push([`BALAI BERTUGAS: ${person.balai || ''}`, "", "", `PANGKAT: ${pangkat}`]);
+      dataRows.push([]); // spacer row
+
+      // Table Header
+      dataRows.push([
+        "TAHUN",
+        ...monthNames,
+        "JUMLAH JAM"
+      ]);
+
+      // Table Body
+      yearsToRender.forEach((year) => {
+        const yearData = person.years && person.years[year] ? person.years[year] : { months: Array(12).fill(0), total: 0 };
+        dataRows.push([
+          year,
+          ...yearData.months.map(m => m || 0),
+          yearData.total
+        ]);
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(dataRows);
+
+      // Merge titles and personnel info
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 13 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 13 } },
+        { s: { r: 2, c: 0 }, e: { r: 2, c: 13 } },
+        { s: { r: 3, c: 0 }, e: { r: 3, c: 13 } },
+        { s: { r: 5, c: 0 }, e: { r: 5, c: 2 } }, // NAMA merge
+        { s: { r: 5, c: 3 }, e: { r: 5, c: 5 } }, // NO BADAN merge
+        { s: { r: 6, c: 0 }, e: { r: 6, c: 2 } }, // BALAI merge
+        { s: { r: 6, c: 3 }, e: { r: 6, c: 5 } }  // PANGKAT merge
+      ];
+
+      ws['!cols'] = [
+        { wch: 12 }, // TAHUN
+        ...Array(12).fill({ wch: 8 }), // months JAN-DIS
+        { wch: 15 } // JUMLAH JAM
+      ];
+
+      XLSX.utils.book_append_sheet(wb, ws, "Jam Penugasan");
+      XLSX.writeFile(wb, `Jam_Penugasan_Tahunan_${person.name.replace(/\s+/g, '_')}_${yearRangeStr}.xlsx`);
+    } else {
+      // Multiple personnel / all view
+      // Table Header
+      dataRows.push([
+        "BIL",
+        "NO. BADAN",
+        "PANGKAT",
+        "NAMA",
+        "BALAI PENDAFTARAN",
+        "TAHUN",
+        ...monthNames,
+        "JUMLAH JAM"
+      ]);
+
+      let excelRowIndex = dataRows.length; // 1-based indexing for merges, after title blocks
+      const merges: any[] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 18 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 18 } },
+        { s: { r: 2, c: 0 }, e: { r: 2, c: 18 } },
+        { s: { r: 3, c: 0 }, e: { r: 3, c: 18 } }
+      ];
+
+      displayedPersonnel.forEach((person, idx) => {
+        let pangkat = person.rank;
+        const rankParts = person.rank.split(' ');
+        if (rankParts.length > 1) {
+          pangkat = rankParts[0];
+        } else if (rankParts.length === 1 && /^\d+$/.test(rankParts[0])) {
+          pangkat = ''; 
+        }
+
+        yearsToRender.forEach((y, yIdx) => {
+          const yearData = person.years && person.years[y] ? person.years[y] : { months: Array(12).fill(0), total: 0 };
+          
+          dataRows.push([
+            yIdx === 0 ? idx + 1 : "",
+            yIdx === 0 ? person.noBadan : "",
+            yIdx === 0 ? pangkat : "",
+            yIdx === 0 ? person.name : "",
+            yearData.balai || person.balai || '',
+            y,
+            ...yearData.months.map(m => m || 0),
+            yearData.total
+          ]);
+        });
+
+        // Add merges for the current person's multi-year row cells
+        if (yearsToRender.length > 1) {
+          const startR = excelRowIndex;
+          const endR = excelRowIndex + yearsToRender.length - 1;
+          merges.push({ s: { r: startR, c: 0 }, e: { r: endR, c: 0 } }); // BIL
+          merges.push({ s: { r: startR, c: 1 }, e: { r: endR, c: 1 } }); // NO. BADAN
+          merges.push({ s: { r: startR, c: 2 }, e: { r: endR, c: 2 } }); // PANGKAT
+          merges.push({ s: { r: startR, c: 3 }, e: { r: endR, c: 3 } }); // NAMA
+        }
+        excelRowIndex += yearsToRender.length;
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(dataRows);
+      ws['!merges'] = merges;
+
+      ws['!cols'] = [
+        { wch: 6 },  // BIL
+        { wch: 15 }, // NO. BADAN
+        { wch: 12 }, // PANGKAT
+        { wch: 30 }, // NAMA
+        { wch: 25 }, // BALAI PENDAFTARAN
+        { wch: 10 }, // TAHUN
+        ...Array(12).fill({ wch: 7 }), // JAN-DIS
+        { wch: 15 }  // JUMLAH JAM
+      ];
+
+      XLSX.utils.book_append_sheet(wb, ws, "Jam Penugasan Semua");
+      XLSX.writeFile(wb, `Jam_Penugasan_Tahunan_Semua_${selectedDistrict}_${yearRangeStr}.xlsx`);
+    }
+  };
+
   const exportYearlyToExcel = () => {
     // Create workbook and worksheet
     const wb = XLSX.utils.book_new();
@@ -4376,6 +4539,18 @@ export default function App() {
 
           {(printMode === 'ALL' || activeTab === 'PERSONAL') && (
             <div className="print-page-container">
+              {activeTab === 'PERSONAL' && (
+                <div className="mb-4 flex gap-4 print:hidden justify-end">
+                  <button onClick={exportPersonalToExcel} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm cursor-pointer">
+                    <FileSpreadsheet className="w-4 h-4" />
+                    Muat Turun Excel (Tahunan)
+                  </button>
+                  <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm cursor-pointer">
+                    <Printer className="w-4 h-4" />
+                    Cetak Borang
+                  </button>
+                </div>
+              )}
               <div className="text-center mb-6">
                 <h2 className="text-xl sm:text-2xl font-bold uppercase tracking-wide text-gray-900">
                   SUKARELAWAN SIMPANAN POLIS DIRAJA MALAYSIA (SSPDRM)
