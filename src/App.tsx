@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Printer, FileSpreadsheet, CalendarDays, CalendarRange, Users, Database, RefreshCw, AlertCircle, CheckCircle2, Download, User, FileText, TrendingUp } from 'lucide-react';
 import Papa from 'papaparse';
 import html2pdf from 'html2pdf.js';
+import * as XLSX from 'xlsx';
 
 // --- MOCK DATA FALLBACK ---
 const tasksList = [
@@ -2413,6 +2414,159 @@ export default function App() {
     document.body.removeChild(fileDownload);
   };
 
+  const exportYearlyToExcel = () => {
+    // Create workbook and worksheet
+    const wb = XLSX.utils.book_new();
+    const dataRows: any[][] = [];
+    
+    // Title Banner rows
+    dataRows.push(["KONTINJEN : MELAKA"]);
+    dataRows.push([`TUNTUTAN ELAUN PENUGASAN SSPDRM - SEPANJANG TAHUN ${selectedYear}`]);
+    dataRows.push([]); // spacer
+    
+    // Header Row 1
+    dataRows.push([
+      "BIL",
+      "FORMASI",
+      "PANGKAT",
+      "JUMLAH JAM BERTUGAS",
+      "24 (A)", "",
+      "49 - 96 (B)", "",
+      "97 - 128 (C)", "",
+      "KESELURUHAN (A+B+C)", ""
+    ]);
+    
+    // Header Row 2
+    dataRows.push([
+      "",
+      "",
+      "",
+      "1 - 23 JAM BIL",
+      "BIL", "RM",
+      "BIL", "RM",
+      "BIL", "RM",
+      "Jumlah BIL", "Jumlah RM"
+    ]);
+    
+    const districtsList = ['IPK SSPDRM', 'MELAKA TENGAH', 'ALOR GAJAH', 'JASIN'];
+    let bilIndex = 1;
+    
+    districtsList.forEach((district) => {
+      const dData = yearlyForecastData.districts[district] || {
+        PEG: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } },
+        APR: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } },
+        JUMLAH: { bracket1_23: { bil: 0, rm: 0 }, bracket24_48: { bil: 0, rm: 0 }, bracket49_96: { bil: 0, rm: 0 }, bracket97_128: { bil: 0, rm: 0 }, total: { bil: 0, rm: 0 } }
+      };
+      
+      const roles = ['PEG', 'APR', 'JUMLAH'];
+      roles.forEach((role, rIdx) => {
+        const rData = dData[role] || {
+          bracket1_23: { bil: 0, rm: 0 },
+          bracket24_48: { bil: 0, rm: 0 },
+          bracket49_96: { bil: 0, rm: 0 },
+          bracket97_128: { bil: 0, rm: 0 },
+          total: { bil: 0, rm: 0 }
+        };
+        
+        dataRows.push([
+          rIdx === 0 ? bilIndex : "",
+          rIdx === 0 ? district : "",
+          role,
+          rData.bracket1_23.bil,
+          rData.bracket24_48.bil,
+          rData.bracket24_48.rm,
+          rData.bracket49_96.bil,
+          rData.bracket49_96.rm,
+          rData.bracket97_128.bil,
+          rData.bracket97_128.rm,
+          rData.total.bil,
+          rData.total.rm
+        ]);
+      });
+      bilIndex++;
+    });
+    
+    // Overall total rows
+    const rolesOverall = ['PEG', 'APR', 'JUMLAH'];
+    rolesOverall.forEach((role, idx) => {
+      const rData = yearlyForecastData.keseluruhan[role] || {
+        bracket1_23: { bil: 0, rm: 0 },
+        bracket24_48: { bil: 0, rm: 0 },
+        bracket49_96: { bil: 0, rm: 0 },
+        bracket97_128: { bil: 0, rm: 0 },
+        total: { bil: 0, rm: 0 }
+      };
+      
+      dataRows.push([
+        idx === 0 ? "KESELURUHAN IMPLIKASI KEWANGAN" : "",
+        "",
+        role,
+        rData.bracket1_23.bil,
+        rData.bracket24_48.bil,
+        rData.bracket24_48.rm,
+        rData.bracket49_96.bil,
+        rData.bracket49_96.rm,
+        rData.bracket97_128.bil,
+        rData.bracket97_128.rm,
+        rData.total.bil,
+        rData.total.rm
+      ]);
+    });
+    
+    // Footer row
+    dataRows.push([]);
+    dataRows.push(["SILA ISIKAN BUTIRAN MENGGUNAKAN FORMAT YANG TELAH DISEDIAKAN MENGIKUT KONTINJEN"]);
+    
+    const ws = XLSX.utils.aoa_to_sheet(dataRows);
+    
+    // Set merges
+    ws['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 11 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 11 } },
+      
+      // BIL, FORMASI, PANGKAT, JUMLAH JAM header merges
+      { s: { r: 3, c: 0 }, e: { r: 4, c: 0 } },
+      { s: { r: 3, c: 1 }, e: { r: 4, c: 1 } },
+      { s: { r: 3, c: 2 }, e: { r: 4, c: 2 } },
+      { s: { r: 3, c: 3 }, e: { r: 4, c: 3 } },
+      
+      // Horizontal merges for brackets
+      { s: { r: 3, c: 4 }, e: { r: 3, c: 5 } },
+      { s: { r: 3, c: 6 }, e: { r: 3, c: 7 } },
+      { s: { r: 3, c: 8 }, e: { r: 3, c: 9 } },
+      { s: { r: 3, c: 10 }, e: { r: 3, c: 11 } }
+    ];
+    
+    // Add row spans for districts
+    for (let d = 0; d < 4; d++) {
+      const baseRow = 5 + d * 3;
+      ws['!merges'].push({ s: { r: baseRow, c: 0 }, e: { r: baseRow + 2, c: 0 } });
+      ws['!merges'].push({ s: { r: baseRow, c: 1 }, e: { r: baseRow + 2, c: 1 } });
+    }
+    
+    // Merge first two columns of KESELURUHAN row
+    ws['!merges'].push({ s: { r: 17, c: 0 }, e: { r: 19, c: 1 } });
+    
+    // Column widths
+    ws['!cols'] = [
+      { wch: 10 }, // BIL / IMPLIKASI
+      { wch: 20 }, // FORMASI
+      { wch: 12 }, // PANGKAT
+      { wch: 20 }, // JUMLAH JAM BERTUGAS
+      { wch: 8 },  // 24 (A) BIL
+      { wch: 14 }, // 24 (A) RM
+      { wch: 8 },  // 49-96 BIL
+      { wch: 14 }, // 49-96 RM
+      { wch: 8 },  // 97-128 BIL
+      { wch: 14 }, // 97-128 RM
+      { wch: 16 }, // KESELURUHAN BIL
+      { wch: 16 }  // KESELURUHAN RM
+    ];
+    
+    XLSX.utils.book_append_sheet(wb, ws, "Yearly Forecast");
+    XLSX.writeFile(wb, `Unjuran_Penugasan_Tahunan_${selectedYear}.xlsx`);
+  };
+
 
   const renderYearlyForecastTable = () => {
     const data = yearlyForecastData;
@@ -4290,6 +4444,18 @@ export default function App() {
 
           {(printMode === 'ALL' || activeTab === 'FORECAST') && (
             <div className="print-page-container">
+              {activeTab === 'FORECAST' && (
+                <div className="mb-4 flex gap-4 print:hidden justify-end">
+                  <button onClick={exportYearlyToExcel} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm cursor-pointer">
+                    <FileSpreadsheet className="w-4 h-4" />
+                    Muat Turun Excel (Tahunan)
+                  </button>
+                  <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm cursor-pointer">
+                    <Printer className="w-4 h-4" />
+                    Cetak Borang
+                  </button>
+                </div>
+              )}
               {renderForecastTable()}
               {renderYearlyForecastTable()}
             </div>
